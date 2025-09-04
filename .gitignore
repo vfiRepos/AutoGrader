@@ -1,0 +1,28 @@
+# --- Secrets ---
+.env                  # Your real API keys (safe, local only)
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+
+# --- Virtual environments ---
+venv/
+ENV/
+env/
+troyProject/
+
+# --- Logs ---
+*.log
+
+# --- OS junk ---
+.DS_Store
+
+# --- Cloud artifacts ---
+function-source.zip
+.env
