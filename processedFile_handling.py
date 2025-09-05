@@ -1,5 +1,6 @@
 from googleapiclient.discovery import build
 from google.auth import default
+from googleapiclient.http import MediaInMemoryUpload
 
 # --- Helpers from before ---
 def move_file_to_processed(service, file_id, processed_folder_id):
@@ -59,6 +60,55 @@ def ensure_processed_folder(service, parent_folder_id):
         processed_folder_id = create_processed_folder(service, parent_folder_id)
         print(f"📂 Created 'Processed' folder: {processed_folder_id}")
         return processed_folder_id
+        import datetime
+
+
+def save_graded_copy(service, transcript_file, grading_text, processed_folder_id, rep_name="Rep"):
+    """
+    Creates a Google Doc copy of the transcript with grading results attached.
+    The new file will be named <rep_name>_<timestamp>.
+    """
+    file_id = transcript_file["id"]
+    file_name = transcript_file["name"]
+
+    # 1. Download transcript content as plain text (works for Google Docs, fallback if not text)
+    transcript_content = service.files().export(
+        fileId=file_id,
+        mimeType="text/plain"
+    ).execute().decode("utf-8")
+
+    # 2. Combine transcript + grading results
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    new_file_name = f"{rep_name}_{timestamp}"
+
+    combined_content = (
+        f"📄 Original Transcript: {file_name}\n\n"
+        f"{transcript_content}\n\n"
+        f"---\n\n"
+        f"📝 Grading Results:\n{grading_text}"
+    )
+
+    # 3. Create a Google Doc in the Processed folder
+    file_metadata = {
+        "name": new_file_name,
+        "parents": [processed_folder_id],
+        "mimeType": "application/vnd.google-apps.document"
+    }
+
+    media = MediaInMemoryUpload(
+        combined_content.encode("utf-8"),
+        mimetype="text/plain"
+    )
+
+    new_file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, name"
+    ).execute()
+
+    print(f"✅ Graded Google Doc created: {new_file['name']} ({new_file['id']})")
+    return new_file
+
 
 def postprocess_latest_file(parent_folder_id: str):
     """

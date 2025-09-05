@@ -1,6 +1,5 @@
 import os, json, sendgrid
 from typing import Dict
-from openai import OpenAI
 from sendgrid.helpers.mail import Mail, Email, To, Content
 from openAI_client import get_client
 
@@ -24,20 +23,35 @@ class EmailAgent:
         print("📧 Email response", response.status_code)
         return {"status": "success", "code": response.status_code}
 
-    def run(self, results: dict, synthesis_result: str):
+    def run(self, results: dict, synthesis_result: str, transcript: str, file_name: str):
 
-        # Build instructions
+        
+        # Just use the file name exactly as it is
+        transcript_name = file_name
+
+        # Build skill summary
         skill_summary = "\n".join([f"- {skill}: {grade}" for skill, grade in results.items()])
+
+        # Build instructions for the model
         instructions = f"""
+        Sales call grading report.
+
+        Transcript file: {transcript_name}
+
         Per-skill results:
         {skill_summary}
 
         Synthesizer summary:
         {synthesis_result}
 
-        include all of the results in the email. 
-        Include the name of the salesperson and the date of the call, which is just today's date 
-        in the subject line. 
+        Original transcript:
+        {transcript}
+
+        Include all of the results in the email. 
+        Use the transcript file name ({transcript_name}) in the subject line.
+        include all of the grading results in the email plus the original transcript for reference.
+  
+ 
         """
 
         response = self.client.chat.completions.create(
@@ -73,7 +87,16 @@ class EmailAgent:
                     if not all([subject, html_body]):
                         raise ValueError(f"Missing fields in tool args: {args}")
 
+                    
+                    # ✅ Append transcript yourself for reliability
+                    html_body += f"""
+                    <hr>
+                    <h3>Original Transcript ({transcript_name})</h3>
+                    <pre style="white-space: pre-wrap; font-family: monospace;">
+                    {transcript}
+                    </pre>
+                    """
+
                     return {"status": "sent", "details": self.email_tool(subject, html_body)}
 
-        # If the model doesn’t call the tool, just log its draft response
         return {"status": "skipped", "content": (message.content or "")[:200]}

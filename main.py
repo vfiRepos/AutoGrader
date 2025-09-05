@@ -7,6 +7,7 @@ from processedFile_handling import postprocess_latest_file
 
 
 
+
 def poll_transcripts(event, context):
     grader = gradingManager()
 
@@ -18,16 +19,21 @@ def poll_transcripts(event, context):
     if not transcript:
         transcript = "⚠️ No transcript found in test folder."
 
+
     # Run grading
     results, synthesis_result = asyncio.run(grader.grade_all(transcript))
 
-    # Save locally (inside Cloud Function container → /tmp)
-    grader.save_results_to_file(results, synthesis_result, filename="/tmp/results.txt")
+    # Save locally (inside Cloud Function container → /tmp
 
     # Email results
     agent = EmailAgent()
-    outcome = agent.run(results, synthesis_result)
+    outcome = agent.run(results, synthesis_result, transcript, file_name)
 
     postprocess_latest_file(folder_id)
 
+
+    
+
+    
+   
     print(f"🎉 Processed transcript {file_name}, emailed results: {outcome}")
