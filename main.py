@@ -3,10 +3,9 @@ import os
 from grading_manager import gradingManager
 from polling_logic import fetch_latest_transcript
 from email_logic import EmailAgent
-from processedFile_handling import find_and_process_all_files
-from polling_logic import get_drive_service
+from processedFile_handling import postprocess_latest_file
 
-TRANSCRIPT_FOLDER_ID = "1DN6ACr1aVn_o1JBReCB9Uw8_cPPR7kkn"
+
 
 def poll_transcripts(event, context):
     grader = gradingManager()
@@ -29,7 +28,6 @@ def poll_transcripts(event, context):
     agent = EmailAgent()
     outcome = agent.run(results, synthesis_result)
 
-    service = get_drive_service
-    find_and_process_all_files(service, folder_id)
+    postprocess_latest_file(folder_id)
 
     print(f"🎉 Processed transcript {file_name}, emailed results: {outcome}")

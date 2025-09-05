@@ -1,12 +1,11 @@
-from pydantic_formating import FinalReport 
+
 from dotenv import load_dotenv
 from openai import OpenAI
 from openAI_client import get_client
 import os
 import json
 
-# Load .env file
-load_dotenv()
+
 
 
 def synthesize(graded_results: dict):
