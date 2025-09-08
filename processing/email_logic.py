@@ -1,140 +1,53 @@
-import os, json, sendgrid
-from typing import Dict
-from sendgrid.helpers.mail import Mail, Email, To, Content
-from openAI_client import get_client
-
-
-
-MANAGER_EMAIL = os.getenv("MANAGER_EMAIL", "manager@vfi.net")  # fallback if env var not set
-
-class EmailAgent:
-    def __init__(self, model="gpt-4o-mini"):
-        self.model = model
-        self.client = get_client()
-
-    from googleapiclient.discovery import build
-from google.oauth2 import service_account
+import os
 import base64
 from email.mime.text import MIMEText
-import os
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
 
-# You’ll need to set GOOGLE_APPLICATION_CREDENTIALS env var to your service account JSON
-# and grant domain-wide delegation if you’re sending on behalf of a user.
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
-def gmail_send_message(to_email: str, subject: str, html_body: str, sender: str) -> dict:
-    """
-    Send an email using the Gmail API.
-
-    Args:
-        to_email: Recipient address
-        subject: Subject line
-        html_body: HTML content
-        sender: The user email to send as (must be authorized for service account)
-
-    Returns:
-        dict: API response from Gmail
-    """
-
-    # Authenticate Gmail API
-    SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
-    creds = service_account.Credentials.from_service_account_file(
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"], scopes=SCOPES
-    )
-    delegated_creds = creds.with_subject(sender)
-
-    service = build("gmail", "v1", credentials=delegated_creds)
-
-    # Build MIME message
-    message = MIMEText(html_body, "html")
+def build_email_with_attachment(to_email, subject, html_body, transcript, sender):
+    message = MIMEMultipart()
     message["to"] = to_email
     message["from"] = sender
     message["subject"] = subject
 
-    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+    # HTML part
+    message.attach(MIMEText(html_body, "html"))
 
-    # Send the message
+    # Transcript as attachment
+    attachment = MIMEBase("text", "plain")
+    attachment.set_payload(transcript.encode("utf-8"))
+    encoders.encode_base64(attachment)
+    attachment.add_header("Content-Disposition", "attachment", filename="transcript.txt")
+    message.attach(attachment)
+
+    return message
+
+
+def gmail_send_message(mime_message, sender: str) -> dict:
+    """
+    Send a MIME email using Gmail API.
+    """
+
+    SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+
+    # Authenticate Gmail API
+    creds = service_account.Credentials.from_service_account_file(
+    "/secrets/gmail-sa-key.json", scopes=SCOPES
+)
+    delegated_creds = creds.with_subject(sender)
+    service = build("gmail", "v1", credentials=delegated_creds)
+
+    # Encode the full MIME message
+    raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode("utf-8")
+
     send_result = service.users().messages().send(
         userId="me", body={"raw": raw_message}
     ).execute()
 
-    print(f"📧 Sent email to {to_email}, ID: {send_result['id']}")
+    print(f"📧 Sent email from {sender} to {mime_message['to']}, Gmail ID: {send_result['id']}")
     return send_result
-
-
-    def run(self, results: dict, synthesis_result: str, transcript: str, file_name: str):
-
-        
-        # Just use the file name exactly as it is
-        transcript_name = file_name
-
-        # Build skill summary
-        skill_summary = "\n".join([f"- {skill}: {grade}" for skill, grade in results.items()])
-
-        # Build instructions for the model
-        instructions = f"""
-        Sales call grading report.
-
-        Transcript file: {transcript_name}
-
-        Per-skill results:
-        {skill_summary}
-
-        Synthesizer summary:
-        {synthesis_result}
-
-        Original transcript:
-        {transcript}
-
-        Include all of the results in the email. 
-        Use the transcript file name ({transcript_name}) in the subject line.
-        include all of the grading results in the email plus the original transcript for reference.
-  
- 
-        """
-
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": instructions}],
-            tools=[{
-                "type": "function",
-                "function": {
-                    "name": "email_tool",
-                    "description": "Send an email with results to the sales manager",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "subject": {"type": "string"},
-                            "html_body": {"type": "string"}
-                        },
-                        "required": ["subject", "html_body"]
-                    }
-                }
-            }]
-        )
-
-        message = response.choices[0].message
-
-        if getattr(message, "tool_calls", None):
-            for tool_call in message.tool_calls:
-                if tool_call.function.name == "email_tool":
-                    raw_args = tool_call.function.arguments or "{}"
-                    args = json.loads(raw_args)
-                    subject = args.get("subject")
-                    html_body = args.get("html_body")
-
-                    if not all([subject, html_body]):
-                        raise ValueError(f"Missing fields in tool args: {args}")
-
-                    
-                    # ✅ Append transcript yourself for reliability
-                    html_body += f"""
-                    <hr>
-                    <h3>Original Transcript ({transcript_name})</h3>
-                    <pre style="white-space: pre-wrap; font-family: monospace;">
-                    {transcript}
-                    </pre>
-                    """
-
-                    return {"status": "sent", "details": self.email_tool(subject, html_body)}
-
-        return {"status": "skipped", "content": (message.content or "")[:200]}

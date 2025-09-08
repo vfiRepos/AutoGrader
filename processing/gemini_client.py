@@ -1,6 +1,6 @@
 import os
 import logging
-from openai import OpenAI
+from openai import OpenAI 
 
 logging.basicConfig(level=logging.INFO)
 

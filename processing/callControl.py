@@ -2,7 +2,7 @@ import time
 import logging
 from openai import OpenAI
 from pydantic_formating import SkillReport
-from openAI_client import get_client
+from gemini_client import get_gemini_client
 
 
 INSTRUCTIONS = """
@@ -32,7 +32,7 @@ Transcript:
 
 
 # Initialize OpenAI/Gemini client (via your wrapper so you can switch later)
-client = get_client()
+client = get_gemini_client()
 
 
 class Agent:

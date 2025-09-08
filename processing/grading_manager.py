@@ -1,6 +1,7 @@
 import os, time
 from datetime import datetime
 from pathlib import Path
+from unittest import result
 
 from Synthesizer_agent import build_synthesizer
 from callControl import call_control_agent
@@ -8,7 +9,7 @@ from capEx import positioning_agent
 from discovery_grader_agent import discovery_agent
 from ideal_customer_agent import icp_agent
 from VFI_value_agent import value_prop_agent
-from email_logic import EmailAgent
+
 
 
 class gradingManager: 
@@ -85,14 +86,5 @@ def main():
         transcript = "No transcript file found. Using placeholder for grading."
 
     results, synthesis_result = grader.grade_all(transcript)
-    grader.save_results_to_file(results, synthesis_result)
 
-    # Run the email agent
-    agent = EmailAgent()
-    outcome = agent.run(results, synthesis_result)
-
-    print(f"🎉 Grading + Email outcome: {outcome}")
-
-
-if __name__ == "__main__":
-    main()
+    return results, synthesis_result

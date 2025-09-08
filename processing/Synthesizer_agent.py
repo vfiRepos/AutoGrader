@@ -1,7 +1,7 @@
 import time
 import logging
 from openai import OpenAI
-from openAI_client import get_client
+from gemini_client import get_gemini_client
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,7 +17,7 @@ class Agent:
         start_time = time.time()
         logging.info(f"🔄 Starting grading for {self.name}...")
 
-        client = get_client()
+        client = get_gemini_client()
         response = client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": transcript}],
