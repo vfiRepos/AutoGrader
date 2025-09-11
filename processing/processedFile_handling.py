@@ -1,6 +1,5 @@
 from googleapiclient.discovery import build
 from google.auth import default
-from googleapiclient.http import MediaInMemoryUpload
 from datetime import datetime, timezone
 import google.auth
 from googleapiclient.discovery import build
@@ -32,21 +31,44 @@ def create_processed_folder(service, parent_folder_id):
     return file.get('id')
 
 
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
 def get_drive_service():
-    """Authenticate and return Google Drive service client."""
-    creds, _ = default(scopes=["https://www.googleapis.com/auth/drive"])
-    return build("drive", "v3", credentials=creds)
+    creds = service_account.Credentials.from_service_account_file(
+        "/secrets/drive-sa-key.json", scopes=DRIVE_SCOPES
+    )
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
 
-
-def fetch_latest_file(service, parent_folder_id):
-    """Get the most recent file in the folder (excluding subfolders)."""
-    results = service.files().list(
-        q=f"'{parent_folder_id}' in parents and mimeType!='application/vnd.google-apps.folder'",
-        orderBy="createdTime desc",
-        pageSize=1,
-        fields="files(id, name, createdTime)"
+def list_transcripts_in_folder(folder_id: str):
+    drive = get_drive_service()
+    results = drive.files().list(
+        q=f"'{folder_id}' in parents and trashed=false",
+        fields="files(id, name, createdTime, mimeType)"
     ).execute()
     return results.get("files", [])
+
+    from io import BytesIO
+from googleapiclient.http import MediaIoBaseDownload
+
+def fetch_transcript_by_id(file_id: str) -> str:
+    drive = get_drive_service()
+    try:
+        # Works for Google Docs
+        content = drive.files().export(fileId=file_id, mimeType="text/plain").execute()
+        return content.decode("utf-8")
+    except Exception:
+        # Fallback: download binary (e.g. TXT, PDF)
+        request = drive.files().get_media(fileId=file_id)
+        fh = BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        return fh.getvalue().decode("utf-8", errors="ignore")
+
 
 
 def ensure_processed_folder(service, parent_folder_id):
@@ -63,7 +85,6 @@ def ensure_processed_folder(service, parent_folder_id):
         processed_folder_id = create_processed_folder(service, parent_folder_id)
         print(f"📂 Created 'Processed' folder: {processed_folder_id}")
         return processed_folder_id
-        import datetime
 
 
 
@@ -93,7 +114,7 @@ def postprocess_latest_file(parent_folder_id: str):
     service = get_drive_service()
 
     # 1. Fetch the latest file in the parent folder
-    latest_files = fetch_latest_file(service, parent_folder_id)
+    latest_files = fetch_transcript_by_id(service, parent_folder_id)
     if not latest_files:
         print("⚠️ No files found in parent folder.")
         return

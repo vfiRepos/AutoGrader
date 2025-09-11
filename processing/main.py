@@ -1,102 +1,134 @@
 import asyncio
 import os
-from grading_manager import gradingManager
-
-import asyncio
-from pubsub_logic import parse_pubsub_event, fetch_transcript_by_id
-from grading_manager import gradingManager
-from processedFile_handling import mark_processed
-import asyncio
 import json
 from pubsub_logic import parse_pubsub_event, fetch_transcript_by_id
-from grading_manager import gradingManager
 from processedFile_handling import mark_processed
-from email_logic import gmail_send_message, build_email_with_attachment
-from build_html import build_html_body
+from grading_manager import gradingManager
+import logging
+from gemini_client import init_gemini
 
-# Pub/Sub topic for emailer
-EMAILER_TOPIC = "projects/YOUR_PROJECT_ID/topics/transcripts.processed"
+# Add this import for publishing to emailer
+from google.cloud import pubsub_v1
 
-import base64, json, google.auth
-from googleapiclient.discovery import build
+# Configure logging to reduce noise
+logging.getLogger().setLevel(logging.WARNING)  # Only show warnings and errors
+logging.getLogger('httplib2').setLevel(logging.ERROR)  # Silence httplib2 noise
+logging.getLogger('google').setLevel(logging.ERROR)  # Silence Google API noise
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+# Initialize Gemini globally
+init_gemini()
 
-def _drive_service():
-    creds, _ = google.auth.default(scopes=SCOPES)
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+# Emailer configuration
+EMAILER_TOPIC = os.environ.get("EMAILER_TOPIC", "projects/sales-transcript-grader/topics/email_report")
+_emailer_publisher = None
 
-def parse_pubsub_event(event):
-    msg = json.loads(base64.b64decode(event["data"]).decode("utf-8"))
-    return {
-        "fileId": msg["fileId"],
-        "fileName": msg["fileName"],
-        "rep": msg.get("rep", "unknown"),
-        "managerEmail": msg.get("managerEmail", "manager@yourdomain.com")
-    }
+def get_emailer_publisher():
+    """Get or create emailer publisher client."""
+    global _emailer_publisher
+    if _emailer_publisher is None:
+        _emailer_publisher = pubsub_v1.PublisherClient()
+    return _emailer_publisher
 
-def fetch_transcript_by_id(file_id: str) -> str:
-    drive = _drive_service()
+def publish_emailer_payload(payload: dict, timeout: int = 30):
+    """
+    Publish grading results to emailer topic.
+    Returns message_id or raises.
+    """
     try:
-        # For Google Docs
-        content = drive.files().export(fileId=file_id, mimeType="text/plain").execute()
-        return content.decode("utf-8")
+        publisher = get_emailer_publisher()
+        data = json.dumps(payload).encode("utf-8")
+        logger.info("Publishing to emailer topic: %s", EMAILER_TOPIC)
+
+        future = publisher.publish(EMAILER_TOPIC, data=data)
+        message_id = future.result(timeout=timeout)
+        logger.info("Published emailer message_id=%s for file=%s",
+                   message_id, payload.get("fileName"))
+        return message_id
     except Exception:
-        # For TXT/PDF/others
-        content = drive.files().get_media(fileId=file_id).execute()
-        return content.decode("utf-8", errors="ignore")
+        logger.exception("Failed to publish emailer payload: %s", payload)
+        raise
 
-
-
-def log_active_identity():
-    creds, project = google.auth.default()
-    print(f"🔎 Running as service account: {creds.service_account_email if hasattr(creds, 'service_account_email') else 'unknown'}")
-    print(f"📂 Default project: {project}")
+# main.py (excerpt)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # Keep our app logs at INFO level
 
 def pubsub_handler(event, context):
-    """
-    Cloud Function entrypoint: processes one transcript task from Pub/Sub.
-    """
-    log_active_identity() 
     # 1. Parse event
     task = parse_pubsub_event(event)
-    file_id = task["fileId"]
-    file_name = task["fileName"]
-    rep = task["rep"]
-    manager_email = task["managerEmail"]
+    file_id = task.get("fileId")
+    file_name = task.get("fileName", "<unknown>")
+    rep = task.get("rep", "<unknown>")
+    manager_email = task.get("managerEmail")  # keep None vs "" to detect missing
 
-    print(f"📩 Received transcript task for {file_name} (rep={rep})")
+    logger.info(f"📩 Processing transcript: {file_name} (rep: {rep})")
 
-    # 2. Fetch transcript text
-    transcript = fetch_transcript_by_id(file_id)
-    if not transcript:
-        transcript = "⚠️ No transcript content available."
+    # sanity checks
+    if not file_id:
+        logger.error("No fileId in task; aborting.")
+        return ("Bad Request: missing fileId", 400)
+
+    # 2. Fetch transcript
+    transcript = fetch_transcript_by_id(file_id) or "⚠️ No transcript content available."
 
     # 3. Run grading
     grader = gradingManager()
-    results, synthesis_result = asyncio.run(grader.grade_all(transcript))
+    try:
+        results, synthesis_result = grader.grade_all(transcript)
+    except Exception as e:
+        logger.exception("Grading failed for file=%s", file_id)
+        # still continue to build a payload with an error marker if you want:
+        results = {}
+        synthesis_result = {"error": str(e)}
 
-    # 4. Mark file processed in Drive
-    mark_processed(file_id)
+    # 4. Mark processed (optional)
+    try:
+        mark_processed(file_id)
+        logger.info(f"✅ Marked file processed: {file_id}")
+    except Exception:
+        logger.exception("mark_processed failed for file=%s", file_id)
 
-    html_body = build_html_body(file_name, results, synthesis_result)
+    # 5. Create comprehensive payload for emailer
+    emailer_payload = {
+        "fileId": file_id,
+        "fileName": file_name,
+        "rep": rep,
+        "managerEmail": manager_email,
+        "timestamp": context.timestamp if context else None,
+        "transcript": transcript,  # Full transcript
+        "grading_results": {
+            "individual_scores": {
+                skill_name: {
+                    "grade": report.items[0].grade,
+                    "reasoning": report.items[0].reasoning
+                } for skill_name, report in results.items()
+            },
+            "final_synthesis": {
+                "grade": synthesis_result.items[0].grade if synthesis_result and hasattr(synthesis_result, 'items') else "ERROR",
+                "reasoning": synthesis_result.items[0].reasoning if synthesis_result and hasattr(synthesis_result, 'items') else str(synthesis_result)
+            }
+        },
+        "metadata": {
+            "processed_at": context.timestamp if context else None,
+            "execution_id": context.event_id if context else None,
+             "processing_status": "completed" if (not synthesis_result or (isinstance(synthesis_result, dict) and not synthesis_result.get("error"))) else "failed"
+        }
+    }
 
-    # 5. Publish results for the emailer
-    # Build the email
-    email_msg = build_email_with_attachment(
-        to_email="gusdaskalakis@gmail.com",
-        subject=f"Transcript Results: {file_name}",
-        html_body=html_body,     # your grading results summary
-        transcript=transcript,   # raw transcript text
-        sender="manager@vfi.net" # must be Workspace account
-    )
+    # 6. Publish to emailer topic
+    try:
+        logger.info("🚀 STARTING EMAIL PUBLICATION for %s", file_name)
+        logger.info("📧 Emailer Payload for %s:", file_name)
+        logger.info("📧 Payload: %s", json.dumps(emailer_payload, indent=2, default=str))
 
-# Send the email
-    gmail_send_message(email_msg, sender="no-reply@vfi.net")
+        logger.info("📨 Calling publish_emailer_payload()...")
+        message_id = publish_emailer_payload(emailer_payload)
+        logger.info("✅ SUCCESS: Published grading results to emailer!")
+        logger.info("✅ Message ID: %s", message_id)
+        logger.info("✅ Email will be sent to: %s", emailer_payload.get("managerEmail") or "default recipient")
+        logger.info("🎯 EMAIL PUBLICATION COMPLETE for %s", file_name)
+    except Exception as e:
+        logger.exception("❌ FAILED to publish to emailer for file=%s: %s", file_id, e)
+        logger.error("❌ Email will NOT be sent for this grading report")
+        # Don't fail the whole function if emailer fails
 
-
-    print(f"🎉 Finished {file_name}, published email task for manager {manager_email}")
-
-    
-
-    
+    return(results, synthesis_result)

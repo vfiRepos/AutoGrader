@@ -3,13 +3,12 @@ from datetime import datetime
 from pathlib import Path
 from unittest import result
 
-from Synthesizer_agent import build_synthesizer
-from callControl import call_control_agent
-from capEx import positioning_agent
-from discovery_grader_agent import discovery_agent
-from ideal_customer_agent import icp_agent
-from VFI_value_agent import value_prop_agent
-
+from agent_logic import run_synthesizer
+from agent_logic import discovery_agent
+from agent_logic import icp_agent
+from agent_logic import value_prop_agent
+from agent_logic import call_control_agent
+from agent_logic import capex_agent
 
 
 class gradingManager: 
@@ -19,63 +18,33 @@ class gradingManager:
             transcript = f.read()
             return transcript
 
-    def grade_all(self, transcript: str) -> dict:
-        start_time = time.time()
-        print("🚀 Starting Troy Project - Full Grading...")
+    
+    def grade_all(self, transcript: str):
+        print(f"🔄 Grading transcript...")
 
-        # Run graders sequentially (they’re already encapsulated in Agent.run)
         results = {
             "call_control": call_control_agent.run(transcript),
-            "positioning": positioning_agent.run(transcript),
+            "cap_ex": capex_agent.run(transcript),
             "discovery": discovery_agent.run(transcript),
             "icp": icp_agent.run(transcript),
             "value_prop": value_prop_agent.run(transcript),
         }
 
-        # Print results
-        print("\n📊 GRADING RESULTS:")
+        synthesis_result = run_synthesizer(results, "gemini-1.5-flash")
+
+        # 📊 Detailed results output
+        print("📊 GRADING RESULTS:")
         for skill, report in results.items():
-            item = report.items[0]
-            print(f"  • {skill.replace('_', ' ').title()}: {item.grade} — {item.reasoning}")
+            print(f"  • {skill}: {report.items[0].grade} — {report.items[0].reasoning}")
 
-        # Synthesize results
-        synth_agent = build_synthesizer(results)
-        synthesis_result = synth_agent.run("")
-
-        total_time = time.time() - start_time
-        print(f"\n✅ Full grading completed in {total_time:.2f}s")
+        print("\n📝 FINAL SYNTHESIS:")
+        print(f"  Final Grade: {synthesis_result.items[0].grade}")
+        print(f"  Reasoning: {synthesis_result.items[0].reasoning}")
 
         return results, synthesis_result
 
-    def save_results_to_file(self, results: dict, synthesis_result: str, filename: str = None):
-        """Save grading results to a text file on desktop"""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            desktop_path = Path.home() / "Desktop"
-            filename = desktop_path / f"{timestamp}.txt"
 
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write("SALES CALL GRADING RESULTS\n")
-            f.write("=" * 50 + "\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            f.write("SKILL GRADES:\n")
-            f.write("-" * 20 + "\n")
-            for skill, report in results.items():
-                item = report.items[0]
-                f.write(f"{skill.replace('_', ' ').title()}: {item.grade}\n")
-                f.write(f"Reasoning: {item.reasoning}\n")
-                f.write("-" * 40 + "\n")
-            
-            f.write("\nFINAL SYNTHESIS:\n")
-            f.write("-" * 20 + "\n")
-            f.write(f"{synthesis_result}\n")
-            f.write("-" * 40 + "\n")
-            
-            f.write(f"\nResults saved to: {filename}\n")
 
-        print(f"💾 Results saved to: {filename}")
-        return filename
 
 
 def main():
