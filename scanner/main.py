@@ -14,7 +14,7 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # Map reps to their shared transcript folder IDs
 REP_FOLDERS = {
-    "shared_folder": "1JqJwiN37EaUe7v5_YSjBnebSds1bxV3y"
+    "shared_folder": "1DN6ACr1aVn_o1JBReCB9Uw8_cPPR7kkn"
 }
 
 def _drive_service():
@@ -98,14 +98,15 @@ def http_handler(request):
     drive = _drive_service()
     pub = _pubsub_client()
 
+    print(f"Scanner started. REP_FOLDERS has {len(REP_FOLDERS)} entries")
     total_published = 0
     for rep, folder_id in REP_FOLDERS.items():
-        logging.info(f"Scanning rep={rep}, folder={folder_id}")
+        print(f"Scanning rep={rep}, folder={folder_id}")
         files = list_unprocessed_files(drive, folder_id)
-        logging.info(f"Found {len(files)} unprocessed files for rep={rep}")
+        print(f"Found {len(files)} unprocessed files for rep={rep}")
 
         for f in files:
-            logging.info(f"Processing file: {f['name']} (ID: {f['id'][:10]})")
+            print(f"Processing file: {f['name']} (ID: {f['id'][:10]})")
             mark_inflight(drive, f["id"])
             publish_task(pub, {
                 "fileId": f["id"],
@@ -116,5 +117,5 @@ def http_handler(request):
             })
             total_published += 1
 
-    logging.info(f"Scan complete. Published {total_published} task(s).")
+    print(f"Scan complete. Published {total_published} task(s).")
     return f"Scan complete. Published {total_published} task(s).", 200
