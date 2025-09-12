@@ -1,59 +1,55 @@
 import json
-import time
-from datetime import datetime, timezone
-
-import google.auth
+import os
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from google.cloud import pubsub_v1
 
-# Adjust these
-PROJECT_ID = "sales-transcript-grader"
-TOPIC = f"projects/{PROJECT_ID}/topics/process_new_files"
+# --- OAuth2 secrets injected via --set-secrets ---
+CLIENT_ID = os.environ["CLIENT_ID"]
+CLIENT_SECRET = os.environ["CLIENT_SECRET"]
+REFRESH_TOKEN = os.environ["REFRESH_TOKEN"]
+PROJECT_ID = os.environ["PROJECT_ID"]
+
+# --- Drive API Scopes ---
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-# Map reps to their shared transcript folder IDs
+# --- Pub/Sub Configuration ---
+TASK_PUB_SUB_TOPIC_ID = "process_newTranscripts"
+TASK_PUB_SUB_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/{TASK_PUB_SUB_TOPIC_ID}"
+
+# --- Folder Configuration ---
 REP_FOLDERS = {
-    "shared_folder": "1DN6ACr1aVn_o1JBReCB9Uw8_cPPR7kkn"
+    "shared_folder": "1JqJwiN37EaUe7v5_YSjBnebSds1bxV3y",
 }
 
-def _drive_service():
-    """Create Drive API client with domain-wide delegation to impersonate no-reply@vfi.net."""
-    creds, _ = google.auth.default(scopes=SCOPES)
-    # Try domain-wide delegation
-    try:
-        delegated_creds = creds.with_subject('no-reply@vfi.net')
-        return build("drive", "v3", credentials=delegated_creds, cache_discovery=False)
-    except Exception:
-        # Fallback to default credentials if DWD fails
-        return build("drive", "v3", credentials=creds, cache_discovery=False)
+# --- Pub/Sub Publisher Client (initialized once) ---
+_pubsub_publisher_client = pubsub_v1.PublisherClient()
 
+
+def _drive_service_refresh_token():
+    """Create Drive API client using secrets injected as environment variables."""
+    refresh_token = REFRESH_TOKEN.strip()
+    client_id = CLIENT_ID.strip()
+    client_secret = CLIENT_SECRET.strip()
+
+    creds = Credentials(
+        None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES,
+    )
+
+    return build("drive", "v3", credentials=creds)
+
+    
 def _pubsub_client():
-    return pubsub_v1.PublisherClient()
+    """Returns a Pub/Sub publisher client."""
+    # In a real scenario, you might want to pass this client around
+    # or ensure it's initialized only once globally.
+    return _pubsub_publisher_client
 
-def _with_retries(fn, *args, **kwargs):
-    """Basic retry for transient Drive/PubSub errors."""
-    max_attempts = 5
-    backoff = 1.0
-    for attempt in range(max_attempts):
-        try:
-            return fn(*args, **kwargs)
-        except HttpError as e:
-            # Retry 429 and 5xx
-            if e.resp.status in (429, 500, 502, 503, 504):
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 16)
-                continue
-            raise
-        except Exception:
-            # Retry common transient errors
-            if attempt < max_attempts - 1:
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 16)
-                continue
-            raise
-
-import logging
 
 def list_unprocessed_files(drive, folder_id):
     """Find files that aren't marked processed or inflight."""
@@ -74,40 +70,38 @@ def list_unprocessed_files(drive, folder_id):
     return unprocessed
 
 
-def mark_inflight(drive, file_id):
-    """Set inflight=true so we don’t double-publish this file."""
-    now = datetime.now(timezone.utc).isoformat()
-    body = {"appProperties": {"inflight": "true", "inflight_at": now}}
-    _with_retries(
-        drive.files().update,
-        fileId=file_id,
-        body=body,
-        supportsAllDrives=True,
-        fields="id, appProperties",
-    ).execute()
+def mark_inflight(drive_service, file_id):
+    """
+    Placeholder function: In a real scenario, this would update a file's metadata
+    or move it to an "in-progress" folder to avoid reprocessing.
+    """
+    print(f"Simulating marking file {file_id} as in-flight...")
 
-def publish_task(pub, payload: dict):
-    """Send message to Pub/Sub for processor."""
-    data = json.dumps(payload).encode("utf-8")
-    future = pub.publish(TOPIC, data=data)
-    # Waiting ensures the publish truly succeeded before returning
-    future.result()
+
+def publish_task(pubsub_client, task_data):
+    """Publishes a task message to the Pub/Sub topic."""
+    data_bytes = json.dumps(task_data).encode("utf-8")
+    future = pubsub_client.publish(TASK_PUB_SUB_TOPIC_PATH, data_bytes)
+    print(f"Published task for file {task_data['fileId']} with message ID: {future.result()}")
+
 
 def http_handler(request):
     """Entry point for Cloud Function (HTTP-triggered)."""
-    drive = _drive_service()
+    # Initialize Drive service using the refresh token method
+    drive = _drive_service_refresh_token()
+    # Get Pub/Sub client
     pub = _pubsub_client()
 
     print(f"Scanner started. REP_FOLDERS has {len(REP_FOLDERS)} entries")
     total_published = 0
     for rep, folder_id in REP_FOLDERS.items():
         print(f"Scanning rep={rep}, folder={folder_id}")
-        files = list_unprocessed_files(drive, folder_id)
+        files = list_unprocessed_files(drive, folder_id) # Pass the authenticated drive service
         print(f"Found {len(files)} unprocessed files for rep={rep}")
 
         for f in files:
             print(f"Processing file: {f['name']} (ID: {f['id'][:10]})")
-            mark_inflight(drive, f["id"])
+            mark_inflight(drive, f["id"]) # Pass the authenticated drive service
             publish_task(pub, {
                 "fileId": f["id"],
                 "fileName": f["name"],
@@ -119,3 +113,4 @@ def http_handler(request):
 
     print(f"Scan complete. Published {total_published} task(s).")
     return f"Scan complete. Published {total_published} task(s).", 200
+

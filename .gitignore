@@ -1,0 +1,6 @@
+# Sensitive credential files
+clean_*.json
+temp_key.json
+*.key
+*.pem
+secrets/

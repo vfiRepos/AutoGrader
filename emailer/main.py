@@ -18,31 +18,37 @@ GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 DOMAIN_SENDER = os.environ.get("FROM_EMAIL", "no-reply@vfi.net")
 
 # Email recipient configuration
-RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "sales-team@vfi.net")
+RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "gusdaskalakis@gmail.com")
 
 def _load_sa_credentials(scopes=GMAIL_SCOPES):
     """Load service account info from environment variable or file."""
     # First try environment variable (for direct JSON content)
     raw = os.environ.get(GMAIL_SA_ENVVAR)
     if raw:
+        logger.info("Loading Gmail SA credentials from environment variable")
         sa_info = json.loads(raw)
     else:
         # Try to read from file path (for secrets mounted as files)
-        secret_path = os.environ.get("GMAIL_SA_KEY_PATH", "/secrets/gmail-sa-key.json")
+        # In Cloud Functions Gen 2, secrets are typically mounted at /secrets/
+        secret_path = "/secrets/gmail-sa-key"
+        logger.info(f"Loading Gmail SA credentials from file: {secret_path}")
         try:
             with open(secret_path, 'r') as f:
                 sa_info = json.load(f)
+                logger.info("Successfully loaded Gmail SA credentials from file")
         except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Service account credentials not found. Tried env var {GMAIL_SA_ENVVAR} and file {secret_path}: {e}")
             raise RuntimeError(f"Service account credentials not found. Tried env var {GMAIL_SA_ENVVAR} and file {secret_path}: {e}")
 
     creds = service_account.Credentials.from_service_account_info(sa_info, scopes=scopes)
+    logger.info("Successfully created Gmail service account credentials")
     return creds
 
 def gmail_service_for_sender(sender: str):
-    """Return a gmail API client that impersonates the sender."""
+    """Return a gmail API client using service account directly."""
     creds = _load_sa_credentials()
-    delegated = creds.with_subject(sender)
-    return build("gmail", "v1", credentials=delegated, cache_discovery=False)
+    # Use service account directly without impersonation
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 def format_grading_html(payload):
     """Format grading results as HTML for email body."""
@@ -191,16 +197,41 @@ def email_handler(event, context):
     Triggered by Pub/Sub messages from the transcript processor.
     """
     try:
+        logger.info("🚀 EMAIL HANDLER FUNCTION STARTED!")
+        logger.info(f"📨 Raw event type: {type(event)}")
+        logger.info(f"📨 Raw event keys: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
         logger.info("📨 EMAIL HANDLER TRIGGERED!")
 
         # Parse Pub/Sub message
         if 'data' in event:
+            # Standard Pub/Sub format
             payload = json.loads(base64.b64decode(event['data']).decode('utf-8'))
             logger.info("📨 Received Pub/Sub message from processor")
+        elif 'message' in event and 'data' in event['message']:
+            # Eventarc Pub/Sub format
+            message_data = base64.b64decode(event['message']['data']).decode('utf-8')
+            payload = json.loads(message_data)
+            logger.info("📨 Received Eventarc Pub/Sub message")
         else:
-            payload = event  # For direct testing
-            logger.info("📨 Received direct test payload")
+            # Handle direct testing (manual calls)
+            logger.info(f"📨 Direct call - Event type: {type(event)}")
+            logger.info(f"📨 Raw event content: {event}")
+            if isinstance(event, str):
+                try:
+                    payload = json.loads(event)
+                    logger.info("📨 Parsed manual JSON string")
+                except json.JSONDecodeError:
+                    logger.warning(f"📨 Failed to parse string as JSON, treating as raw dict: {event}")
+                    # Try to parse it as a simple dict string
+                    payload = {"message": event}
+            elif isinstance(event, dict):
+                payload = event
+                logger.info("📨 Received manual dict payload")
+            else:
+                logger.error(f"📨 Unsupported event format: {type(event)}")
+                raise ValueError(f"Unsupported event format: {type(event)}")
 
+        logger.info(f"📧 Full payload received: {payload}")
         file_name = payload.get('fileName', 'unknown')
         logger.info(f"📧 Processing email request for: {file_name}")
         logger.info(f"📧 Rep: {payload.get('rep', 'unknown')}")
