@@ -4,21 +4,50 @@ import logging
 from typing import Any
 import google.auth
 from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+import os
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
-def _drive_service():
-    """Create Drive service with domain-wide delegation to impersonate no-reply@vfi.net."""
-    creds, _ = google.auth.default(scopes=SCOPES)
-    # Try domain-wide delegation
-    try:
-        delegated_creds = creds.with_subject('no-reply@vfi.net')
-        return build("drive", "v3", credentials=delegated_creds, cache_discovery=False)
-    except Exception:
-        # Fallback to default credentials if DWD fails
-        return build("drive", "v3", credentials=creds, cache_discovery=False)
 
+def _drive_service():
+    """Create Drive API client using OAuth2 credentials."""
+    # Debug: Check if environment variables are present
+    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN")
+    client_id = os.environ.get("GMAIL_SA_CLIENT_ID")
+    client_secret = os.environ.get("GMAIL_SA_CLIENT_SECRET")
+    
+    logger.info(f"🔍 OAuth2 Debug - refresh_token present: {bool(refresh_token)}")
+    logger.info(f"🔍 OAuth2 Debug - client_id present: {bool(client_id)}")
+    logger.info(f"🔍 OAuth2 Debug - client_secret present: {bool(client_secret)}")
+    
+    if not refresh_token:
+        logger.error("❌ GMAIL_REFRESH_TOKEN is missing or empty")
+        raise ValueError("GMAIL_REFRESH_TOKEN environment variable is required")
+    if not client_id:
+        logger.error("❌ GMAIL_SA_CLIENT_ID is missing or empty")
+        raise ValueError("GMAIL_SA_CLIENT_ID environment variable is required")
+    if not client_secret:
+        logger.error("❌ GMAIL_SA_CLIENT_SECRET is missing or empty")
+        raise ValueError("GMAIL_SA_CLIENT_SECRET environment variable is required")
+    
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES,
+    )
+
+    # Refresh immediately to get a valid access token
+    logger.info("🔄 Refreshing OAuth2 credentials...")
+    creds.refresh(Request())
+    logger.info("✅ Successfully authenticated with OAuth2 credentials")
+
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 logger = logging.getLogger(__name__)
 
@@ -91,22 +120,32 @@ def fetch_transcript_by_id(file_id: str) -> str:
     Download/export a transcript file from Google Drive as plain text.
     Returns None if file not found or other error occurs.
     """
+    logger.info(f"🔍 Attempting to fetch transcript for file_id: {file_id}")
     drive = _drive_service()
 
     try:
-        # Try Google Docs export
+        # First, get file metadata to understand the file type
+        file_metadata = drive.files().get(fileId=file_id, fields="name,mimeType").execute()
+        file_name = file_metadata.get('name', 'Unknown')
+        mime_type = file_metadata.get('mimeType', 'Unknown')
+        logger.info(f"📄 File: {file_name}, MIME type: {mime_type}")
+        
+        # Try Google Docs export first
         content = drive.files().export(
             fileId=file_id,
             mimeType="text/plain"
         ).execute()
+        logger.info(f"✅ Successfully exported Google Doc as text. Content length: {len(content)}")
         return content.decode("utf-8")
     except Exception as e:
-        logger.warning(f"Google Docs export failed for {file_id}: {e}")
+        logger.warning(f"⚠️ Google Docs export failed for {file_id}: {e}")
         try:
             # Fallback for PDFs, TXT files, etc.
+            logger.info(f"🔄 Trying get_media fallback for {file_id}")
             request = drive.files().get_media(fileId=file_id)
             content = request.execute()
+            logger.info(f"✅ Successfully downloaded file media. Content length: {len(content)}")
             return content.decode("utf-8")
         except Exception as e2:
-            logger.error(f"File fetch failed for {file_id}: {e2}")
+            logger.error(f"❌ Both export and get_media failed for {file_id}: {e2}")
             return None  # Return None to indicate failure

@@ -53,13 +53,12 @@ missedOpportunity_agent = Agent(
     For each, provide a corrective example of what should have been said.
 
     IMPORTANT: In your JSON response, include:
-    - "examples": array of missed opportunity descriptions with corrective examples
+    - "examples": array of STRINGS, where each string combines the missed opportunity and corrective example
 
-    Example:
+    Format each example as a single string like:
+    "Rep didn't stress VFI's edge in oil & gas - Should have said: 'Most lenders are pulling back in oil & gas — that's exactly where VFI's broad credit window comes in. We can evaluate this $15MM compressor deal quickly and give your client a real option.'"
 
-    Missed: Rep didn't stress VFI's edge in oil & gas.
-
-    Should have said: "Most lenders are pulling back in oil & gas — that's exactly where VFI's broad credit window comes in. We can evaluate this $15MM compressor deal quickly and give your client a real option."
+    Each item in the examples array should be ONE string that includes both the problem and the solution.
     """
 )
 trueDiscovery_agent = Agent(

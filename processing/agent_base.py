@@ -76,6 +76,30 @@ class Agent:
                 cleaned = clean_json(ai_response)
                 logging.info(f"🧹 {self.name}: Cleaned JSON (first 150 chars): {cleaned[:150]}{'...' if len(cleaned) > 150 else ''}")
 
+                # Special handling for Missed Opportunity agent - extract strings from dictionaries
+                if self.name == "Missed Opportunity":
+                    try:
+                        parsed_json = json.loads(cleaned)
+                        if "items" in parsed_json and parsed_json["items"]:
+                            item = parsed_json["items"][0]
+                            if "examples" in item and isinstance(item["examples"], list):
+                                # Convert any dictionary examples to strings
+                                processed_examples = []
+                                for example in item["examples"]:
+                                    if isinstance(example, dict) and example:
+                                        # Extract the first value from the dictionary
+                                        first_key = next(iter(example.keys()))
+                                        processed_examples.append(str(example[first_key]))
+                                    elif isinstance(example, str):
+                                        processed_examples.append(example)
+                                    else:
+                                        processed_examples.append(str(example))
+                                item["examples"] = processed_examples
+                                cleaned = json.dumps(parsed_json)
+                                logging.info(f"🔧 {self.name}: Fixed dictionary examples format")
+                    except Exception as parse_error:
+                        logging.warning(f"⚠️ {self.name}: Could not fix examples format: {parse_error}")
+
                 result = SkillReport.model_validate_json(cleaned)
 
                 logging.info(f"✅ {self.name}: SUCCESS! Grade: {result.items[0].grade}")

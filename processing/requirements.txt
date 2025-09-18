@@ -1,27 +1,28 @@
+# Messaging
+google-cloud-pubsub==2.31.1
 
-google-cloud-pubsub>=2.31.0
-google-cloud-secret-manager>=2.20.0
-google-api-python-client>=2.180.0
-google-auth>=2.40.0
-google-auth-httplib2>=0.2.0
-google-auth-oauthlib>=1.2.0
-functions-framework>=3.9.0
+# Secrets
+google-cloud-secret-manager==2.24.0
 
-# Google Generative AI
-google-ai-generativelanguage>=0.6.0
-google-generativeai>=0.8.0
+# Google API clients
+google-api-python-client==2.181.0
+google-auth==2.40.3
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.2
+google-api-core==2.25.1
+protobuf==4.25.5
 
-# Core dependencies
-google-api-core>=2.19.0,<3.0.0
-protobuf>=4.25.0
-grpcio>=1.62.0
-grpcio-status>=1.62.0
+# Functions framework (Cloud Functions runtime)
+functions-framework==3.9.2
+
+# Generative AI (Gemini)
+google-ai-generativelanguage==0.6.15
+google-generativeai==0.8.5
 
 # Validation
 pydantic==2.11.7
 
 # Web framework
-flask>=3.0.0
+flask==3.1.2
 
-# Logging (optional, remove if not used)
 

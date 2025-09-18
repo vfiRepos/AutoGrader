@@ -1,225 +1,221 @@
 import asyncio
 import os
 import json
+import logging
 from pubsub_logic import parse_pubsub_event, fetch_transcript_by_id
 from processedFile_handling import mark_processed
 from grading_manager import gradingManager
-import logging
 from gemini_client import init_gemini
-
-# Add this import for publishing to emailer
 from google.cloud import pubsub_v1
+import sys
 
-# Configure logging to reduce noise
-logging.getLogger().setLevel(logging.WARNING)  # Only show warnings and errors
-logging.getLogger('httplib2').setLevel(logging.ERROR)  # Silence httplib2 noise
-logging.getLogger('google').setLevel(logging.ERROR)  # Silence Google API noise
+logging.basicConfig(
+    level=logging.DEBUG,       # show all levels
+    stream=sys.stdout,         # make sure logs go to stdout
+    force=True                 # override any previous settings
+)
+logger = logging.getLogger(__name__)
 
 # Initialize Gemini globally
 init_gemini()
 
 # Emailer configuration
-EMAILER_TOPIC = os.environ.get("EMAILER_TOPIC", "projects/sales-transcript-grader/topics/email_report")
+EMAILER_TOPIC = os.environ.get("EMAILER_TOPIC", "projects/sales-transcript-grader/topics/receive-grading")
 _emailer_publisher = None
 
 def get_emailer_publisher():
     """Get or create emailer publisher client."""
     global _emailer_publisher
     if _emailer_publisher is None:
+        logger.info("🔧 Creating new Pub/Sub publisher client...")
         _emailer_publisher = pubsub_v1.PublisherClient()
     return _emailer_publisher
 
 def publish_emailer_payload(payload: dict, timeout: int = 30):
-    """
-    Publish grading results to emailer topic.
-    Returns message_id or raises.
-    """
+    """Publish grading results to emailer topic."""
     try:
         publisher = get_emailer_publisher()
         data = json.dumps(payload).encode("utf-8")
-        logger.info("Publishing to emailer topic: %s", EMAILER_TOPIC)
+        logger.info("📨 Publishing payload to emailer topic: %s", EMAILER_TOPIC)
+        logger.info("📦 Payload JSON length: %d", len(data))
+        logger.info("📦 Payload preview: %s", json.dumps(payload, indent=2)[:1000])
 
         future = publisher.publish(EMAILER_TOPIC, data=data)
         message_id = future.result(timeout=timeout)
-        logger.info("Published emailer message_id=%s for file=%s",
+        logger.info("✅ Published to Pub/Sub. message_id=%s fileName=%s",
                    message_id, payload.get("fileName"))
         return message_id
     except Exception:
-        logger.exception("Failed to publish emailer payload: %s", payload)
+        logger.exception("❌ Failed to publish emailer payload: %s", payload)
         raise
 
-# main.py (excerpt)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Keep our app logs at INFO level
+def safe_grade(report, skill_name="unknown"):
+    """Extract grade and reasoning safely from a report object."""
+    try:
+        logger.info(f"🔍 Inspecting report for skill={skill_name}: type={type(report)} repr={repr(report)}")
+        if hasattr(report, 'items') and report.items:
+            logger.info(f"✅ Report for skill={skill_name} has items, extracting first one...")
+            grade = report.items[0].grade
+            reasoning = report.items[0].reasoning
+            logger.info(f"✅ Extracted grade={grade} reasoning={reasoning[:60]}...")
+            return {"grade": grade, "reasoning": reasoning}
+        else:
+            logger.warning(f"⚠️ Report for skill={skill_name} has no items: {repr(report)}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not extract grade for skill={skill_name}: {e}")
+        logger.warning(f"⚠️ Raw report object: {repr(report)}")
+
+    return {"grade": "ERROR", "reasoning": "No grading data"}
 
 def pubsub_handler(event, context):
-    # 1. Parse event
     logger.info("🚀 PROCESSOR FUNCTION STARTED")
-    logger.info("🔧 Checking Gemini AI client initialization...")
+    logger.info("📨 Raw event type: %s", type(event))
+    logger.info("📨 Raw event content (truncated): %s", str(event)[:500])
 
-    # Check if Gemini API key is available
-    api_key = os.environ.get("GENAI_API_KEY")
-    if api_key:
-        logger.info("✅ GENAI_API_KEY is configured (starts with %s...)", api_key[:6])
-    else:
-        logger.error("❌ GENAI_API_KEY is NOT configured!")
-
-    logger.info("📨 Received Pub/Sub event, parsing...")
-
+    # 1. Parse event
     try:
         task = parse_pubsub_event(event)
         logger.info("✅ Successfully parsed Pub/Sub event")
+        logger.info("📋 Parsed task: %s", task)
     except Exception as e:
         logger.error("❌ FAILED to parse Pub/Sub event: %s", str(e))
         logger.exception("Parse error details:")
-        return ("Bad Request: invalid event format", 400)
+        return "Bad Request: invalid event format"
 
     file_id = task.get("fileId")
     file_name = task.get("fileName", "<unknown>")
     rep = task.get("rep", "<unknown>")
-    manager_email = task.get("managerEmail", "gusdaskalakis@gmail.com")  # Default recipient
+    manager_email = task.get("managerEmail", "gusdaskalakis@gmail.com")
 
-    logger.info("📋 Extracted task details:")
-    logger.info("   • File ID: %s", file_id)
-    logger.info("   • File Name: %s", file_name)
-    logger.info("   • Representative: %s", rep)
-    logger.info("   • Manager Email: %s", manager_email)
+    logger.info("📋 Extracted details:")
+    logger.info("   • fileId: %s", file_id)
+    logger.info("   • fileName: %s", file_name)
+    logger.info("   • rep: %s", rep)
+    logger.info("   • managerEmail: %s", manager_email)
 
-    logger.info("📩 Processing transcript: %s (rep: %s)", file_name, rep)
-
-    # sanity checks
     if not file_id:
-        logger.error("No fileId in task; aborting.")
-        return ("Bad Request: missing fileId", 400)
+        logger.error("❌ Missing fileId in task; aborting.")
+        return "Bad Request: missing fileId"
+
+    # Check if file is already processed (but allow inflight files to be processed)
+    try:
+        from processedFile_handling import get_drive_service
+        drive = get_drive_service()
+        file_metadata = drive.files().get(
+            fileId=file_id,
+            fields="appProperties",
+            supportsAllDrives=True
+        ).execute()
+        
+        app_props = file_metadata.get("appProperties", {}) or {}
+        if app_props.get("processed") == "true":
+            logger.warning(f"🚫 SKIPPING: File {file_id} already processed")
+            return {
+                "status": "skipped",
+                "reason": "already_processed",
+                "file_id": file_id,
+                "file_name": file_name
+            }
+        # Allow inflight files to be processed (they might be stuck)
+    except Exception as e:
+        logger.warning(f"⚠️ Could not check file status for {file_id}: {e}")
+        # Continue processing if we can't check status
 
     # 2. Fetch transcript
-    logger.info("📄 STEP 2: Fetching transcript content...")
-    logger.info("🔍 Calling fetch_transcript_by_id(%s)...", file_id)
-
     try:
+        logger.info("📄 Fetching transcript for fileId=%s...", file_id)
         transcript = fetch_transcript_by_id(file_id) or "⚠️ No transcript content available."
-        transcript_length = len(transcript) if transcript else 0
-        logger.info("✅ Transcript fetched successfully (%d characters)", transcript_length)
-
-        if transcript and len(transcript) > 100:
-            logger.info("📝 Transcript preview: %s...", transcript[:100].replace('\n', ' ').replace('\r', ' '))
-        elif transcript:
-            logger.info("📝 Full transcript: %s", transcript)
-        else:
-            logger.warning("⚠️ No transcript content available")
-
+        logger.info("✅ Transcript fetched. Length=%d", len(transcript))
+        logger.info("📝 Transcript preview: %s...", transcript[:200].replace("\n", " "))
     except Exception as e:
         logger.error("❌ FAILED to fetch transcript: %s", str(e))
         logger.exception("Transcript fetch error details:")
         transcript = "⚠️ Error fetching transcript content."
 
     # 3. Run grading
-    logger.info("🎯 STEP 3: Running AI grading analysis...")
-    logger.info("🤖 Initializing grading manager...")
-
     grader = gradingManager()
-    logger.info("✅ Grading manager initialized")
-
+    results, synthesis_result = {}, None
     try:
-        logger.info("🚀 Calling grader.grade_all() - this may take several seconds...")
+        logger.info("🤖 Running grader.grade_all()...")
         results, synthesis_result = grader.grade_all(transcript)
-        logger.info("✅ Grading completed successfully!")
-
-        # Log grading results summary
-        if results:
-            logger.info("📊 Individual skill assessments completed:")
-            for skill_name, report in results.items():
-                if hasattr(report, 'items') and report.items:
-                    grade = report.items[0].grade
-                    logger.info("   • %s: %s", skill_name, grade)
-                else:
-                    logger.info("   • %s: Error in grading", skill_name)
-        else:
-            logger.warning("⚠️ No individual skill results generated")
-
-        # Log synthesis result
-        if synthesis_result and hasattr(synthesis_result, 'items') and synthesis_result.items:
-            synthesis_grade = synthesis_result.items[0].grade
-            logger.info("🎯 Final synthesis grade: %s", synthesis_grade)
-        else:
-            logger.warning("⚠️ No synthesis result generated")
-
+        logger.info("✅ Grading completed.")
+        logger.info("📊 Results object type: %s", type(results))
+        logger.info("📊 Results keys: %s", list(results.keys()))
+        logger.info("📊 Synthesis result type: %s", type(synthesis_result))
+        logger.info("📊 Synthesis result repr: %s", repr(synthesis_result))
     except Exception as e:
-        logger.error("❌ GRADING FAILED for file=%s: %s", file_id, str(e))
+        logger.error("❌ Grading failed: %s", str(e))
         logger.exception("Grading error details:")
-        # still continue to build a payload with an error marker if you want:
-        results = {}
         synthesis_result = {"error": str(e)}
-        logger.info("⚠️ Continuing with error payload despite grading failure")
 
-    # 4. Mark processed (optional)
-    logger.info("📝 STEP 4: Marking file as processed...")
+    # 4. Mark processed
     try:
+        logger.info("📝 Marking file as processed: %s", file_id)
         mark_processed(file_id)
-        logger.info("✅ Successfully marked file processed: %s", file_id)
+        logger.info("✅ File marked processed.")
     except Exception:
-        logger.error("❌ FAILED to mark file as processed: %s", file_id)
+        logger.error("❌ Failed to mark file processed: %s", file_id)
         logger.exception("mark_processed error details:")
 
-    # 5. Create comprehensive payload for emailer
-    logger.info("📦 STEP 5: Creating emailer payload...")
-    emailer_payload = {
-        "fileId": file_id,
-        "fileName": file_name,
-        "rep": rep,
-        "managerEmail": manager_email,
-        "timestamp": context.timestamp if context else None,
-        "transcript": transcript,  # Full transcript
-        "grading_results": {
-            "individual_scores": {
-                skill_name: {
-                    "grade": report.items[0].grade,
-                    "reasoning": report.items[0].reasoning
-                } for skill_name, report in results.items()
-            },
-            "final_synthesis": {
-                "grade": synthesis_result.items[0].grade if synthesis_result and hasattr(synthesis_result, 'items') else "ERROR",
-                "reasoning": synthesis_result.items[0].reasoning if synthesis_result and hasattr(synthesis_result, 'items') else str(synthesis_result)
-            }
-        },
-        "metadata": {
-            "processed_at": context.timestamp if context else None,
-            "execution_id": context.event_id if context else None,
-             "processing_status": "completed" if (not synthesis_result or (isinstance(synthesis_result, dict) and not synthesis_result.get("error"))) else "failed"
+    logger.info(f"📤 Publishing transcript length: {len(transcript) if transcript else 0}")
+
+    # Check if transcript is valid before sending email
+    if (not transcript or 
+        transcript.startswith("⚠️") or 
+        "No transcript content" in transcript or
+        "No transcript provided" in transcript or
+        len(transcript.strip()) < 50):  # Too short to be a real transcript
+        logger.warning(f"🚫 SKIPPING EMAIL: Invalid transcript for file {file_id}")
+        logger.warning(f"🚫 Transcript content: {transcript}")
+        return {
+            "status": "skipped",
+            "reason": "invalid_transcript",
+            "file_id": file_id,
+            "file_name": file_name,
+            "transcript_preview": transcript[:100] if transcript else "None"
         }
-    }
 
-    logger.info("✅ Emailer payload created successfully")
-    logger.info("📧 Payload contains %d characters of transcript", len(emailer_payload.get("transcript", "")))
-    logger.info("📧 Will send email to: %s", emailer_payload.get("managerEmail", "unknown"))
-
-    # 6. Publish to emailer topic
-    logger.info("📨 STEP 6: Publishing to emailer topic...")
+    logger.info("📦 Building emailer payload...")
     try:
-        logger.info("🚀 STARTING EMAIL PUBLICATION for %s", file_name)
-        logger.info("📨 Calling publish_emailer_payload()...")
-
-        message_id = publish_emailer_payload(emailer_payload)
-
-        logger.info("✅ SUCCESS: Published grading results to emailer!")
-        logger.info("✅ Message ID: %s", message_id)
-        logger.info("✅ Email will be sent to: %s", emailer_payload.get("managerEmail") or "default recipient")
-        logger.info("🎯 EMAIL PUBLICATION COMPLETE for %s", file_name)
-
-        # Final success summary
-        logger.info("🎉 PROCESSOR FUNCTION COMPLETED SUCCESSFULLY!")
-        logger.info("📊 Summary:")
-        logger.info("   • File: %s", file_name)
-        logger.info("   • Rep: %s", rep)
-        logger.info("   • Transcript: %d chars", len(emailer_payload.get("transcript", "")))
-        logger.info("   • Emailer Message ID: %s", message_id)
-
+        emailer_payload = {
+            "fileId": file_id,
+            "fileName": file_name,
+            "rep": rep,
+            "managerEmail": manager_email,
+            "timestamp": getattr(context, "timestamp", None),
+            "transcript": transcript if transcript is not None else "⚠️ Transcript missing (processor error)",
+            "grading_results": {
+                "individual_scores": {
+                    skill_name: safe_grade(report, skill_name) for skill_name, report in results.items()
+                },
+                "final_synthesis": (
+                    safe_grade(synthesis_result, "synthesis") if synthesis_result else
+                    {"grade": "ERROR", "reasoning": "No synthesis"}
+                )
+            },
+            "metadata": {
+                "processed_at": getattr(context, "timestamp", None),
+                "execution_id": getattr(context, "event_id", None),
+                "processing_status": "completed" if results else "failed"
+            }
+        }
+        logger.info("✅ Emailer payload built successfully.")
+        logger.info("📦 Full payload (truncated to 1000 chars): %s",
+                    json.dumps(emailer_payload, indent=2)[:1000])
     except Exception as e:
-        logger.error("❌ FAILED to publish to emailer for file=%s: %s", file_id, str(e))
-        logger.exception("Emailer publication error details:")
-        logger.error("❌ Email will NOT be sent for this grading report")
-        logger.info("⚠️ Function will continue despite emailer failure")
-        # Don't fail the whole function if emailer fails
+        logger.error("❌ Failed to build emailer payload: %s", e)
+        logger.exception("Payload build error details:")
+        return "Failed to build payload"
 
-    logger.info("🏁 PROCESSOR FUNCTION FINISHING")
-    return(results, synthesis_result)
+    # 6. Publish payload
+    try:
+        logger.info("📨 Publishing payload to emailer...")
+        message_id = publish_emailer_payload(emailer_payload)
+        logger.info("✅ Emailer publish complete. message_id=%s", message_id)
+    except Exception as e:
+        logger.error("❌ FAILED to publish to emailer: %s", str(e))
+        logger.exception("Emailer publish error details:")
+        return "Failed to publish emailer payload"
+
+    logger.info("🏁 PROCESSOR FUNCTION FINISHING OK")
+    return "OK"
