@@ -15,23 +15,10 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 def _drive_service():
     """Create Drive API client using OAuth2 credentials."""
     # Debug: Check if environment variables are present
-    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN")
-    client_id = os.environ.get("GMAIL_SA_CLIENT_ID")
-    client_secret = os.environ.get("GMAIL_SA_CLIENT_SECRET")
-    
-    logger.info(f"🔍 OAuth2 Debug - refresh_token present: {bool(refresh_token)}")
-    logger.info(f"🔍 OAuth2 Debug - client_id present: {bool(client_id)}")
-    logger.info(f"🔍 OAuth2 Debug - client_secret present: {bool(client_secret)}")
-    
-    if not refresh_token:
-        logger.error("❌ GMAIL_REFRESH_TOKEN is missing or empty")
-        raise ValueError("GMAIL_REFRESH_TOKEN environment variable is required")
-    if not client_id:
-        logger.error("❌ GMAIL_SA_CLIENT_ID is missing or empty")
-        raise ValueError("GMAIL_SA_CLIENT_ID environment variable is required")
-    if not client_secret:
-        logger.error("❌ GMAIL_SA_CLIENT_SECRET is missing or empty")
-        raise ValueError("GMAIL_SA_CLIENT_SECRET environment variable is required")
+    refresh_token = os.environ.get("REFRESH_TOKEN")
+    client_id = os.environ.get("CLIENT_ID")
+    client_secret = os.environ.get("CLIENT_SECRET")
+
     
     creds = Credentials(
         token=None,
@@ -42,10 +29,8 @@ def _drive_service():
         scopes=SCOPES,
     )
 
-    # Refresh immediately to get a valid access token
-    logger.info("🔄 Refreshing OAuth2 credentials...")
     creds.refresh(Request())
-    logger.info("✅ Successfully authenticated with OAuth2 credentials")
+
 
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
@@ -61,58 +46,30 @@ def parse_pubsub_event(event: Any) -> dict:
     Returns a dict with the decoded task.
     Raises ValueError/TypeError on clearly invalid payloads.
     """
-    try:
-        # If functions-framework gave us a flask request body already parsed as dict
-        if isinstance(event, dict):
-            # Pub/Sub minimal: {"data":"<base64...>"}
-            if "data" in event and isinstance(event["data"], str):
-                raw = event["data"]
-                # sometimes it's base64 encoded
-                try:
-                    decoded = base64.b64decode(raw).decode("utf-8")
-                    return json.loads(decoded)
-                except Exception:
-                    # maybe it's plain json string
-                    try:
-                        return json.loads(raw)
-                    except Exception:
-                        raise ValueError("Unable to decode 'data' field in event")
+    import logging
+    logger.info(f"🔎 Raw event: {event!r}")
 
-            # Pub/Sub wrapper: {"message": {"data": "..."}}
-            if "message" in event and isinstance(event["message"], dict):
-                msg = event["message"]
-                if "data" in msg and isinstance(msg["data"], str):
-                    try:
-                        decoded = base64.b64decode(msg["data"]).decode("utf-8")
-                        return json.loads(decoded)
-                    except Exception:
-                        try:
-                            return json.loads(msg["data"])
-                        except Exception:
-                            raise ValueError("Unable to decode message.data")
-
-            # Already a plain task dict: {"fileId":"123", ...}
-            if "fileId" in event and "fileName" in event:
-                return event
-
-            # if it's empty dict, bail
-            if not event:
-                raise ValueError("Empty dict body for event.")
-
-        # If event is a raw string body
-        if isinstance(event, str):
-            if not event.strip():
-                raise ValueError("Empty string body for event.")
-            # try parse as JSON
-            return json.loads(event)
-
-        # fallback: unsupported type
-        raise TypeError(f"Unsupported event type: {type(event)}")
-
-    except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub event: {e}")
-        raise
-
+    if isinstance(event, dict):
+        if "data" in event:
+            # Pub/Sub minimal format
+            raw = event["data"]
+            decoded = base64.b64decode(raw).decode("utf-8")
+            return json.loads(decoded)
+        elif "message" in event and "data" in event["message"]:
+            # Pub/Sub push wrapper format (e.g., Eventarc)
+            raw = event["message"]["data"]
+            decoded = base64.b64decode(raw).decode("utf-8")
+            return json.loads(decoded)
+        elif "fileId" in event and "fileName" in event:
+            # Direct test payload (already a dict)
+            return event
+        else:
+            raise ValueError("Unsupported dictionary event format")
+    elif isinstance(event, str):
+        # Raw JSON string
+        return json.loads(event)
+    else:
+        raise ValueError(f"Unsupported event type: {type(event)}")
 
 
 def fetch_transcript_by_id(file_id: str) -> str:

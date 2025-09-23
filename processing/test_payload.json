@@ -1,0 +1,25 @@
+{
+  "fileId": "test-file-123",
+  "fileName": "Test Transcript",
+  "rep": "test_rep",
+  "managerEmail": "gusdaskalakis@gmail.com",
+  "timestamp": "2025-09-18T14:45:00.000Z",
+  "transcript": "This is a test transcript content for debugging purposes.",
+  "grading_results": {
+    "individual_scores": {
+      "rapport_building": {
+        "grade": "A",
+        "reasoning": "Excellent rapport building."
+      }
+    },
+    "final_synthesis": {
+      "grade": "A-",
+      "reasoning": "Overall strong performance."
+    }
+  },
+  "metadata": {
+    "processed_at": "2025-09-18T14:45:00.000Z",
+    "execution_id": "test-execution-123",
+    "processing_status": "completed"
+  }
+}

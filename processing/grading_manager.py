@@ -1,7 +1,6 @@
 import os, time
 from datetime import datetime
 from pathlib import Path
-from unittest import result
 
 from agent_logic import run_synthesizer
 from agent_logic import discovery_agent

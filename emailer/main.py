@@ -8,51 +8,85 @@ from email.mime.base import MIMEBase
 from email import encoders
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+import sys
 
-logging.basicConfig(level=logging.INFO)
+
+logging.basicConfig(
+    level=logging.DEBUG,       # show all levels
+    stream=sys.stdout,         # make sure logs go to stdout
+    force=True                 # override any previous settings
+)
 logger = logging.getLogger(__name__)
 
-# Gmail service account configuration
-GMAIL_SA_ENVVAR = "GMAIL_SA_KEY"
+# Gmail OAuth configuration (set via Cloud Function secrets)
+GMAIL_SA_CLIENT_ID = os.environ.get("GMAIL_SA_CLIENT_ID")
+GMAIL_SA_CLIENT_SECRET = os.environ.get("GMAIL_SA_CLIENT_SECRET")
+GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN")
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
-DOMAIN_SENDER = os.environ.get("FROM_EMAIL", "no-reply@vfi.net")
 
-# Email recipient configuration
-RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "gusdaskalakis@gmail.com")
+# Sender/recipient defaults
+DOMAIN_SENDER = os.environ.get("FROM_EMAIL", "gdaskalakis@vfi.net")
+RECIPIENT_EMAIL = os.environ.get("managerEmail", "gusdaskalakis@gmail.com")
 
-def _load_sa_credentials(scopes=GMAIL_SCOPES):
-    """Load service account info from environment variable or file."""
-    # First try environment variable (for direct JSON content)
-    raw = os.environ.get(GMAIL_SA_ENVVAR)
-    if raw:
-        logger.info("Loading Gmail SA credentials from environment variable")
-        sa_info = json.loads(raw)
-    else:
-        # Try to read from file path (for secrets mounted as files)
-        # In Cloud Functions Gen 2, secrets are typically mounted at /secrets/
-        secret_path = "/secrets/gmail-sa-key"
-        logger.info(f"Loading Gmail SA credentials from file: {secret_path}")
-        try:
-            with open(secret_path, 'r') as f:
-                sa_info = json.load(f)
-                logger.info("Successfully loaded Gmail SA credentials from file")
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.error(f"Service account credentials not found. Tried env var {GMAIL_SA_ENVVAR} and file {secret_path}: {e}")
-            raise RuntimeError(f"Service account credentials not found. Tried env var {GMAIL_SA_ENVVAR} and file {secret_path}: {e}")
+# No cache needed - we'll use Google Drive file metadata
 
-    creds = service_account.Credentials.from_service_account_info(sa_info, scopes=scopes)
-    logger.info("Successfully created Gmail service account credentials")
-    return creds
 
-def gmail_service_for_sender(sender: str):
-    """Return a gmail API client using service account directly."""
-    creds = _load_sa_credentials()
-    # Use service account directly without impersonation
+def gmail_service():
+    """Return a Gmail API client using OAuth client + refresh token."""
+    creds = Credentials(
+        None,
+        refresh_token=GMAIL_REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GMAIL_SA_CLIENT_ID,
+        client_secret=GMAIL_SA_CLIENT_SECRET,
+        scopes=GMAIL_SCOPES,
+    )
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-def format_grading_html(payload):
+def drive_service():
+    """Return a Drive API client using OAuth client + refresh token."""
+    creds = Credentials(
+        None,
+        refresh_token=GMAIL_REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GMAIL_SA_CLIENT_ID,
+        client_secret=GMAIL_SA_CLIENT_SECRET,
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+
+
+def normalize_grade_class(grade: str) -> str:
+    """Normalize grade strings into safe CSS class suffixes."""
+    if not grade:
+        return "grade-NA"
+    g = grade.upper().strip()
+
+    # Handle common variants
+    if g.startswith("A"):
+        return "grade-A"
+    elif g.startswith("B"):
+        return "grade-B"
+    elif g.startswith("C"):
+        return "grade-C"
+    elif g.startswith("D"):
+        return "grade-D"
+    elif g.startswith("F"):
+        return "grade-F"
+    else:
+        return "grade-NA"
+
+def format_grading_html(payload, timestamp):
     """Format grading results as HTML for email body."""
+    logger.info(f"🔍 DEBUG: Formatting grading HTML for payload keys: {list(payload.keys())}")
     results = payload['grading_results']
+    logger.info(f"🔍 DEBUG: grading_results keys: {list(results.keys())}")
+    logger.info(f"🔍 DEBUG: individual_scores type: {type(results.get('individual_scores', 'MISSING'))}")
+    logger.info(f"🔍 DEBUG: final_synthesis type: {type(results.get('final_synthesis', 'MISSING'))}")
+    
     file_name = payload['fileName']
     rep = payload['rep']
 
@@ -76,6 +110,7 @@ def format_grading_html(payload):
             <h1>📊 Sales Transcript Grading Results</h1>
             <p><strong>File:</strong> {file_name}</p>
             <p><strong>Representative:</strong> {rep}</p>
+            <p><strong>Email ID:</strong> {timestamp}</p>
         </div>
 
         <h2>Individual Skill Assessments</h2>
@@ -85,7 +120,8 @@ def format_grading_html(payload):
     for skill_name, skill_data in results['individual_scores'].items():
         grade = skill_data['grade']
         reasoning = skill_data['reasoning']
-        grade_class = f"grade-{grade}"
+        grade_class = normalize_grade_class(grade)
+
 
         html += f"""
         <div class="skill-card">
@@ -99,7 +135,7 @@ def format_grading_html(payload):
     synthesis = results['final_synthesis']
     synthesis_grade = synthesis['grade']
     synthesis_reasoning = synthesis['reasoning']
-    synthesis_class = f"grade-{synthesis_grade}"
+    synthesis_class = normalize_grade_class(synthesis_grade)
 
     html += f"""
         <h2>🎯 Final Synthesis</h2>
@@ -130,130 +166,102 @@ def build_email_with_attachment(to_email, subject, html_body, transcript_text, f
     attachment = MIMEBase("text", "plain")
     attachment.set_payload(transcript_text.encode("utf-8"))
     encoders.encode_base64(attachment)
-    attachment.add_header("Content-Disposition", "attachment", filename=f"{file_name}_transcript.txt")
+    safe_name = file_name.replace(" ", "_").replace("/", "_")
+    attachment.add_header("Content-Disposition", "attachment", filename=f"{safe_name}_transcript.txt")
     message.attach(attachment)
 
     return message
-
 def send_grading_email(payload):
     """Send grading results email with transcript attachment."""
-    try:
-        # Extract data from payload
-        grading_results = payload['grading_results']
-        file_name = payload['fileName']
-        rep = payload['rep']
-        transcript = payload['transcript']
 
-        logger.info(f"📧 Preparing email for {file_name} (rep: {rep})")
 
-        # Use the configured recipient email
-        to_email = RECIPIENT_EMAIL
-        logger.info(f"📧 Sending to: {to_email}")
-        logger.info(f"📧 From: {DOMAIN_SENDER}")
+    file_name = payload['fileName']
+    rep = payload['rep']
+    transcript = payload['transcript']
 
-        # Create email content
-        subject = f"Sales Transcript Grading: {file_name} - {rep}"
-        logger.info(f"📧 Subject: {subject}")
+ 
+    to_email = RECIPIENT_EMAIL
 
-        logger.info("📧 Generating HTML body...")
-        html_body = format_grading_html(payload)
 
-        logger.info("📧 Building email with transcript attachment...")
-        email_message = build_email_with_attachment(
-            to_email=to_email,
-            subject=subject,
-            html_body=html_body,
-            transcript_text=transcript,
-            file_name=file_name,
-            sender=DOMAIN_SENDER
-        )
+    # Create email subject + body with unique timestamp
+    import time
+    timestamp = int(time.time() * 1000)  # milliseconds
+    subject = f"Sales Transcript Grading: {file_name} - {rep} [{timestamp}]"
 
-        logger.info("📧 Creating Gmail service...")
-        service = gmail_service_for_sender(DOMAIN_SENDER)
 
-        logger.info("📧 Encoding email message...")
-        raw_message = base64.urlsafe_b64encode(email_message.as_bytes()).decode("utf-8")
+    html_body = format_grading_html(payload, timestamp)
 
-        logger.info("📧 Sending email via Gmail API...")
-        send_result = service.users().messages().send(
-            userId="me",
-            body={"raw": raw_message}
-        ).execute()
+    email_message = build_email_with_attachment(
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        transcript_text=transcript,
+        file_name=file_name,
+        sender=DOMAIN_SENDER
+    )
 
-        logger.info(f"✅ EMAIL SUCCESSFULLY SENT!")
-        logger.info(f"✅ To: {to_email}")
-        logger.info(f"✅ File: {file_name}")
-        logger.info(f"✅ Gmail Message ID: {send_result['id']}")
-        return send_result
+    # Encode properly for Gmail API
+    raw_message = base64.urlsafe_b64encode(email_message.as_bytes()).decode("utf-8")
 
-    except Exception as e:
-        logger.exception(f"❌ EMAIL SENDING FAILED for {payload.get('fileName', 'unknown')}: {e}")
-        logger.error("❌ Gmail API call failed")
-        raise
+    logger.info("📧 Creating Gmail service...")
+    service = gmail_service()
+
+    logger.info("📧 Sending email via Gmail API...")
+    send_result = service.users().messages().send(
+        userId="me",
+        body={"raw": raw_message}
+    ).execute()
+
+
+    return send_result
+
+
 
 def email_handler(event, context):
-    """
-    Cloud Function entry point for processing grading email requests.
-    Triggered by Pub/Sub messages from the transcript processor.
-    """
+    # Parse Pub/Sub message
+    decoded = base64.b64decode(event["data"]).decode("utf-8")
+    if not decoded.strip():
+        raise ValueError("Empty Pub/Sub message")
+    payload = json.loads(decoded)
+    
+    file_id = payload.get('fileId')
+    file_name = payload.get('fileName', 'unknown')
+    transcript = payload.get('transcript', '')
+    
+    # Check if transcript is missing or empty
+    if not transcript or not transcript.strip():
+        logger.warning(f"⚠️ No transcript available for file {file_id} ({file_name}), skipping email")
+        return {"status": "skipped", "reason": "no_transcript"}
+    
+    # Check if email already sent for this file
     try:
-        logger.info("🚀 EMAIL HANDLER FUNCTION STARTED!")
-        logger.info(f"📨 Raw event type: {type(event)}")
-        logger.info(f"📨 Raw event keys: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
-        logger.info("📨 EMAIL HANDLER TRIGGERED!")
-
-        # Parse Pub/Sub message
-        if 'data' in event:
-            # Standard Pub/Sub format
-            payload = json.loads(base64.b64decode(event['data']).decode('utf-8'))
-            logger.info("📨 Received Pub/Sub message from processor")
-        elif 'message' in event and 'data' in event['message']:
-            # Eventarc Pub/Sub format
-            message_data = base64.b64decode(event['message']['data']).decode('utf-8')
-            payload = json.loads(message_data)
-            logger.info("📨 Received Eventarc Pub/Sub message")
-        else:
-            # Handle direct testing (manual calls)
-            logger.info(f"📨 Direct call - Event type: {type(event)}")
-            logger.info(f"📨 Raw event content: {event}")
-            if isinstance(event, str):
-                try:
-                    payload = json.loads(event)
-                    logger.info("📨 Parsed manual JSON string")
-                except json.JSONDecodeError:
-                    logger.warning(f"📨 Failed to parse string as JSON, treating as raw dict: {event}")
-                    # Try to parse it as a simple dict string
-                    payload = {"message": event}
-            elif isinstance(event, dict):
-                payload = event
-                logger.info("📨 Received manual dict payload")
-            else:
-                logger.error(f"📨 Unsupported event format: {type(event)}")
-                raise ValueError(f"Unsupported event format: {type(event)}")
-
-        logger.info(f"📧 Full payload received: {payload}")
-        file_name = payload.get('fileName', 'unknown')
-        logger.info(f"📧 Processing email request for: {file_name}")
-        logger.info(f"📧 Rep: {payload.get('rep', 'unknown')}")
-        logger.info(f"📧 Recipient will be: {RECIPIENT_EMAIL}")
-
-        # Send the grading email
-        logger.info("📧 Calling send_grading_email()...")
-        result = send_grading_email(payload)
-        logger.info("✅ EMAIL SENT SUCCESSFULLY!")
-        logger.info(f"✅ Gmail Message ID: {result['id']}")
-
-        return {
-            "status": "success",
-            "email_id": result['id'],
-            "recipient": RECIPIENT_EMAIL,
-            "file_processed": file_name
-        }
-
+        drive = drive_service()
+        file_metadata = drive.files().get(
+            fileId=file_id,
+            fields="appProperties",
+            supportsAllDrives=True
+        ).execute()
+        
+        app_props = file_metadata.get('appProperties', {})
+        if app_props.get('email_sent') == 'true':
+            logger.info(f"📧 Email already sent for file {file_id}, skipping")
+            return {"status": "skipped", "reason": "already_sent"}
     except Exception as e:
-        logger.exception("❌ EMAIL HANDLER FAILED")
-        logger.error("❌ Email was NOT sent due to error")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        logger.warning(f"⚠️ Could not check email status for {file_id}: {e}")
+    
+    # Send the email
+    result = send_grading_email(payload)
+    
+    # Mark as email sent
+    try:
+        drive.files().update(
+            fileId=file_id,
+            body={'appProperties': {'email_sent': 'true'}},
+            supportsAllDrives=True
+        ).execute()
+        logger.info(f"✅ Marked file {file_id} as email sent")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not mark email sent for {file_id}: {e}")
+    
+    return result
+    
