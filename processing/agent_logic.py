@@ -5,144 +5,281 @@ call_control_agent = Agent(
     instructions="""
     Grade the rep's **call control and next-step setting**.
 
-    Did they:
-    - Balance listening vs. talking?
-    - When a live deal surfaced, did they drill down instead of drifting away?
-    - Secure a specific next step (intro, financials, second call), not vague follow-up?
-    - Create urgency?
+    Evaluate the following dimensions:
 
-    IMPORTANT: In your JSON response, include:
-    - "ratio": estimated rep vs. prospect talk ratio as percentage (e.g., 60.0 for 60% rep talking)
+    1. Talk Ratio
+       - Estimate the percentage of total time the rep spoke vs. the prospect.
+       - Calculate based on transcript analysis of speaking segments and duration.
+       - Return two numbers:
+         - "rep_talk_ratio": % of time rep talked (float, e.g., 62.5).
+         - "prospect_talk_ratio": % of time prospect talked (float).
+       - CRITICAL: These ratios must add up to exactly 100%. If there are other participants, include them in the calculation.
+       - Note: These ratios represent the proportion of total call time each participant was speaking.
+       - Example: If rep talked 60% and prospect talked 40%, then rep_talk_ratio=60.0 and prospect_talk_ratio=40.0
+
+    2. Call Control
+       - Did the rep balance listening vs. talking?
+       - Did they redirect when the conversation drifted?
+
+    3. Deal Handling
+       - When a live deal surfaced, did the rep drill down instead of drifting away?
+
+    4. Next Step Setting
+       - Did the rep secure a **specific, concrete next step** (intro, financials, second call)?
+       - Or was the follow-up vague?
+
+    5. Urgency
+       - Did the rep create urgency for the next step?
+
+    ---
+    Response Format:
+    Return JSON only, structured like this:
+
+    {
+      "rep_talk_ratio": <float>,
+      "prospect_talk_ratio": <float>,
+      "call_control": "<short explanation>",
+      "deal_handling": "<short explanation>",
+      "next_step": "<short explanation>",
+      "urgency": "<short explanation>",
+      "score": <float>,   // 0–100 performance score
+      "grade": "<string>" // Letter grade A–F
+    }
     """
 )
+
 
 discovery_agent = Agent(
     name="Discovery",
     instructions="""
     Grade the rep's **discovery questions**.
 
-    
+    Evaluate across three categories:
 
-Surface-Level Questions (do not count toward discovery total)
-• Small talk (“How’s it going?”)
-• Simple confirmations (“Is that correct?”)
-• Non-strategic asks without probing deeper.
+    1. Surface-Level Questions (do not count toward discovery score)
+    2. Mid-Level Questions
+    3. Deep Discovery Questions
 
-"""
-)
-fillerUse_agent = Agent(
-    name="Filler Use",
-    instructions="""
-    Grade the rep's **filler use**.
-    - Track number of unnecessary filler words (e.g., "honestly," "to be frank," "it's one where," "so yeah," "go ahead and…").
-    - Heavy filler reduces grade — it weakens authority and clarity.
+    ---
+    Response Format:
+    Return JSON only:
 
-    IMPORTANT: In your JSON response, include:
-    - "count": exact number of filler words found
-    - "examples": list of specific filler phrases used
+    {
+      "surface_questions": <int>,           // Number of basic/surface questions asked
+      "mid_questions": <int>,               // Number of mid-level discovery questions
+      "deep_questions": <int>,              // Number of deep discovery questions
+      "total_questions": <int>,             // Total number of questions asked
+      "discovery_score": <float>,           // Percentage of questions that were discovery (mid+deep)/total * 100
+      "reasoning": "<detailed explanation of discovery performance>",
+      "score": <float>,                     // Overall performance score (0-100)
+      "grade": "<string>"                   // Letter grade A–F
+    }
     """
 )
+
+
+filler_use_agent = Agent(
+    name="Filler Use",
+    instructions="""
+    Grade the rep's **filler word usage**.
+
+    Evaluate:
+    - Identify and count all unnecessary filler words/phrases.
+    - Provide direct examples.
+    - Heavy filler use reduces grade.
+
+    ---
+    Response Format:
+    Return JSON only:
+
+    {
+      "count": <int>,
+      "examples": ["<string>", ...],
+      "filler_rate": <float>,
+      "filler_score": <int>,
+      "reasoning": "<detailed explanation of filler word usage and impact>",
+      "score": <float>,
+      "grade": "<string>" // Letter grade A–F
+    }
+    """
+)
+
 
 missedOpportunity_agent = Agent(
     name="Missed Opportunity",
     instructions="""
-    Grade the rep's **missed opportunity**.
+    Grade the rep's **missed opportunities** during the call.
 
-    List every key missed opportunity.
+    Identify key missed opportunities and provide corrective examples.
 
-    For each, provide a corrective example of what should have been said.
+    ---
+    Response Format:
+    Return JSON only:
 
-    IMPORTANT: In your JSON response, include:
-    - "examples": array of STRINGS, where each string combines the missed opportunity and corrective example
-
-    Format each example as a single string like:
-    "Rep didn't stress VFI's edge in oil & gas - Should have said: 'Most lenders are pulling back in oil & gas — that's exactly where VFI's broad credit window comes in. We can evaluate this $15MM compressor deal quickly and give your client a real option.'"
-
-    Each item in the examples array should be ONE string that includes both the problem and the solution.
+    {
+      "missed_opportunities": [
+        {
+          "opportunity": "<string>",
+          "corrective": "<string>",
+          "location": "<string>"
+        }
+      ],
+      "reasoning": "<detailed explanation of missed opportunities and their impact on the call>",
+      "summary": "<short explanation>",
+      "score": <float>,
+      "grade": "<string>" // Letter grade A–F
+    }
     """
 )
+
+
 trueDiscovery_agent = Agent(
     name="True Discovery",
     instructions="""
     Grade the rep's **true discovery questions**.
-    True Discovery Questions (counted)
-    • Role & decision-making authority.
-    • Deal flow: frequency, size, sectors.
-    • Capital structure & unmet CapEx needs.
-    • Frustrations with banks/lenders (kick-outs, retrades, covenants).
-    • Referral drivers (speed, flexibility, certainty).
-    • Deep probing on live deals (financials, timing, collateral specifics).
 
-    IMPORTANT: In your JSON response, include:
-    - "count": exact number of true discovery questions asked
-    - "examples": list of the specific discovery questions used
+    Count only true discovery questions:
+    - Role/authority, deal flow, capital structure, unmet needs,
+      frustrations with lenders, referral drivers, deep probing on live deals.
 
+    ---
+    Response Format:
+    Return JSON only:
+
+    {
+      "count": <int>,                    // Total number of true discovery questions asked
+      "examples": ["<string>", ...],     // Specific examples of true discovery questions
+      "percentage_of_questions": <float>, // Percentage of all questions that were true discovery (0-100)
+      "discovery_score": <int>,          // Overall discovery quality score (0-100)
+      "reasoning": "<detailed explanation of discovery performance>",
+      "score": <float>,                  // Overall performance score (0-100)
+      "grade": "<string>"                // Letter grade A–F
+    }
     """
 )
+
 
 icp_agent = Agent(
     name="ICP",
     instructions="""
     Grade the rep's **ICP Alignment**.
 
-    Did they:
-    - Did they anchor VFI’s ICP correctly:
-    - $20MM+ revenue.
-    - 2+ years of audited/reviewed financials.
-    - $500K+ annual CapEx.
-    - 2–5MM target deal size, 36–60 month terms.
+    Check if the rep anchored VFI’s ICP:
+    - $20MM+ revenue
+    - 2+ years of audited/reviewed financials
+    - $500K+ annual CapEx
+    - $2–5MM target deal size
+    - 36–60 month terms
 
-Did they qualify/disqualify based on ICP?
+    ---
+    Response Format:
+    Return JSON only:
+
+    {
+      "revenue_checked": <bool>,
+      "financials_checked": <bool>,
+      "capex_checked": <bool>,
+      "deal_size_checked": <bool>,
+      "term_checked": <bool>,
+      "count": <int>,
+      "alignment_score": <int>,
+      "qualified": <bool>,
+      "notes": "<short explanation>",
+      "score": <float>,
+      "grade": "<string>" // Letter grade A–F
+    }
     """
 )
+
+
 
 processCompliance_agent = Agent(
-    name="Process",
+    name="Process Compliance",
     instructions="""
-    Grade the rep's **process**.
-    Task: check 4 steps (Rapport & Setup; Agenda/Framing; VFI Snapshot; Transition to Discovery), extract exact excerpt if present, and output a compact JSON + 1-line human verdict.
+    Grade the rep's **process compliance**.
 
+    Check 4 required steps:
+    1. Rapport & Setup — greet, reference LinkedIn, confirm role/title.
+    2. Agenda/Framing — promise quick snapshot then invite prospect to speak.
+    3. VFI Snapshot — must include ≥3 core concepts:
+       • independent direct lender
+       • long history
+       • funds with own capital / makes own credit decisions / moves quickly
+       • 100% financing across asset types
+       • broad credit window / covenant-lite / low red tape
+    4. Transition to Discovery — explicit pivot asking about prospect's role/transactions.
 
-    Rapport & Setup — greet, reference LinkedIn, confirm role/title.
+    ---
+    Response Format:
+    Return JSON only, structured like this:
 
-    Agenda/Framing — promise quick snapshot then invite prospect to speak.
-
-    VFI Snapshot — must include ≥3 core concepts (independent direct lender; long history; funds with own capital/makes own credit decisions/moves quickly; 100% financing across asset types; broad credit window / covenant-lite / low red tape).
-
-    Transition to Discovery — explicit pivot asking about prospect’s role/transactions.
-
-    If no evidence for a step → result="fail", quote="", timestamp=null, confidence≤0.4.
+    {
+      "reasoning": "<detailed analysis of process compliance, including which steps were completed and which were missed>",
+      "score": <float>,           // percentage of steps passed (0–100)
+      "grade": "<string>",        // overall grade (A–F)
+      "examples": [
+        "<step name>: <pass/fail> - <explanation>",
+        "<step name>: <pass/fail> - <explanation>"
+      ]
+    }
     """
 )
+
 
 segmentAwareness_agent = Agent(
     name="Segment Awareness",
     instructions="""
+    Grade the rep's **segment awareness and tailored approach**.
+
     Did the rep know who they were calling and tailor discovery accordingly?
 
-    Banks / Senior Lenders → “What are the top reasons you turn down CapEx requests?” | Position VFI as complementary.
+    Banks / Senior Lenders → "What are the top reasons you turn down CapEx requests?" | Position VFI as complementary.
 
-    Debt Advisors / Consultants → “Have you had projects stall because of assets outside the bank’s box?” | Position VFI as covenant-lite, flexible, fast.
+    Debt Advisors / Consultants → "Have you had projects stall because of assets outside the bank's box?" | Position VFI as covenant-lite, flexible, fast.
 
-    Private Equity / Placement Agents → “Which portfolio companies have the heaviest CapEx needs?” | Position VFI as equity-preservation.
+    Private Equity / Placement Agents → "Which portfolio companies have the heaviest CapEx needs?" | Position VFI as equity-preservation.
 
-    Independent Sponsors → “When equity is tight, how do you cover unexpected CapEx?” | Position VFI as stretching equity.
+    Independent Sponsors → "When equity is tight, how do you cover unexpected CapEx?" | Position VFI as stretching equity.
 
-    Brokers / Intermediaries → “What’s the biggest frustration you face when placing equipment-heavy deals?” | Position VFI as direct capital, no retrades, speed.
-"""
+    Brokers / Intermediaries → "What's the biggest frustration you face when placing equipment-heavy deals?" | Position VFI as direct capital, no retrades, speed.
+
+    ---
+    Response Format:
+    Return JSON only:
+
+    {
+      "reasoning": "<detailed analysis of segment awareness and tailored approach>",
+      "segment_identified": <bool>,        // Did rep identify the prospect's segment?
+      "tailored_questions": <bool>,        // Did rep ask segment-appropriate questions?
+      "positioning_aligned": <bool>,       // Did rep position VFI appropriately for segment?
+      "score": <float>,                    // Overall performance score (0-100)
+      "grade": "<string>"                  // Letter grade A–F
+    }
+    """
 )
 
 value_prop_agent = Agent(
     name="Value Prop",
     instructions="""
-    Grade the rep's **value proposition**.
+    Grade the rep's **value proposition delivery**.
 
     Did they:
-    - Did they reinforce VFI’s differentiators beyond the snapshot?
+    - Reinforce VFI's differentiators beyond the snapshot?
+    - Position VFI as a growth CapEx partner, not a bank competitor?
+    - Connect directly to prospect's situation and segment?
 
-    - Did they position VFI as a growth CapEx partner, not a bank competitor?
+    ---
+    Response Format:
+    Return JSON only:
 
-    - Did they connect directly to prospect’s situation and segment?
+    {
+      "reasoning": "<detailed analysis of value proposition delivery>",
+      "differentiators_reinforced": <bool>,   // Did rep reinforce VFI differentiators?
+      "positioned_as_partner": <bool>,        // Did rep position VFI as partner vs competitor?
+      "connected_to_situation": <bool>,       // Did rep connect to prospect's specific situation?
+      "score": <float>,                       // Overall performance score (0-100)
+      "grade": "<string>"                     // Letter grade A–F
+    }
     """
 )
 
@@ -156,53 +293,60 @@ capex_agent = Agent(
     - Emphasize fixed asset funding?
     - Explain liquidity benefits?
     - Align with PE sponsors or CFO priorities?
+
+    ---
+    Response Format:
+    Return JSON only:
+
+    {
+      "reasoning": "<detailed analysis of CapEx positioning>",
+      "distinguished_from_banks": <bool>,     // Did rep distinguish VFI from banks?
+      "emphasized_fixed_assets": <bool>,      // Did rep emphasize fixed asset funding?
+      "explained_liquidity": <bool>,          // Did rep explain liquidity benefits?
+      "aligned_with_priorities": <bool>,      // Did rep align with PE/CFO priorities?
+      "score": <float>,                       // Overall performance score (0-100)
+      "grade": "<string>"                     // Letter grade A–F
+    }
     """
 )
 
 
 def build_synthesizer(model: str = "gemini-1.5-flash"):
     instructions = """
-You are the synthesizer. Combine the following graded skill areas into one final evaluation.
+You are the synthesizer. Combine the graded outputs from all skill-specific agents into one unified final evaluation.
 
-Based on the individual skill grades and reasoning, provide an overall assessment of the sales representative's performance.
+Rules:
+- Consider ALL categories (Call Control, CapEx, Discovery, ICP, Value Proposition, Filler Use, Missed Opportunities, True Discovery, Process Compliance, Segment Awareness).
+- Weigh strengths, weaknesses, ratios, counts, and missed opportunities.
+- Output ONLY JSON in the required format.
 
 Grade Criteria:
-- A: Outstanding performance across all skills with excellent execution
-- B: Strong performance with good skills and minor areas for improvement
-- C: Average performance with room for development in multiple areas
-- D: Below average performance requiring significant improvement
-- F: Poor performance needing fundamental changes
+- A: Outstanding across nearly all skills
+- B: Strong overall, minor areas to improve
+- C: Average, multiple skills need development
+- D: Weak, significant improvement required
+- F: Very poor, fundamental changes required
 
-Provide only:
-- A final grade (A–F)
+---
+Response Format (JSON only):
 
-# of surface-level questions
-
-# of true discovery questions
-
-# of filler words used
-
-- Rep vs. prospect talk ratio (%)
-
--Strengths
-
-- Weaknesses
-
-- Missed opportunities (with what should have been said)
-
-- Final assessment
-
-Evaluate all skill areas including:
-- Call Control: listening vs. talking balance, next-step setting, urgency creation
-- CapEx: positioning VFI as growth CapEx partner vs. banks
-- Discovery: strategic questioning quality and depth
-- ICP: alignment with VFI's ideal customer profile
-- Value Proposition: differentiation and prospect-specific tailoring
-- Filler Use: unnecessary filler words that reduce authority
-- Missed Opportunities: key moments where better responses could have been given
-- True Discovery: deep probing questions about role, deal flow, capital structure
-- Process Compliance: adherence to call structure (Rapport, Agenda, VFI Snapshot, Discovery transition)
-- Segment Awareness: tailoring approach based on prospect type (banks, PE, sponsors, etc.)
+{
+  "final_grade": "<A-F>",
+  "surface_questions": <int>,
+  "true_discovery_questions": <int>,
+  "filler_words": <int>,
+  "rep_talk_ratio": <float>,         // % rep talking
+  "prospect_talk_ratio": <float>,    // % prospect talking
+  "strengths": ["<string>", ...],
+  "weaknesses": ["<string>", ...],
+  "missed_opportunities": [
+    {
+      "opportunity": "<string>",
+      "corrective": "<string>"
+    }
+  ],
+  "final_assessment": "<short overall summary>"
+}
 """
     return Agent(
         name="Final Synthesizer",
@@ -216,6 +360,80 @@ def run_synthesizer(graded_results: dict, model: str = "gemini-1.5-flash"):
         f"{skill_name.replace('_', ' ').title()}: {report.items[0].grade} — {report.items[0].reasoning}"
         for skill_name, report in graded_results.items()
     )
-    agent = build_synthesizer(model)
-    return agent.run(grades_text)   # 👈 always pass grades at runtime
+    
+    # Use direct Gemini API call instead of agent base class to avoid SkillReport validation
+    import google.generativeai as genai
+    from gemini_client import init_gemini
+    
+    init_gemini()
+    
+    instructions = """
+You are the synthesizer. Combine the graded outputs from all skill-specific agents into one unified final evaluation.
+
+Rules:
+- Consider ALL categories (Call Control, CapEx, Discovery, ICP, Value Proposition, Filler Use, Missed Opportunities, True Discovery, Process Compliance, Segment Awareness).
+- Weigh strengths, weaknesses, ratios, counts, and missed opportunities.
+- Output ONLY JSON in the required format.
+
+Grade Criteria:
+- A: Outstanding across nearly all skills
+- B: Strong overall, minor areas to improve
+- C: Average, multiple skills need development
+- D: Weak, significant improvement required
+- F: Very poor, fundamental changes required
+
+---
+Response Format (JSON only):
+
+{
+  "final_grade": "<A-F>",
+  "surface_questions": <int>,
+  "true_discovery_questions": <int>,
+  "filler_words": <int>,
+  "rep_talk_ratio": <float>,         // % rep talking
+  "prospect_talk_ratio": <float>,    // % prospect talking
+  "strengths": ["<string>", ...],
+  "weaknesses": ["<string>", ...],
+  "missed_opportunities": [
+    {
+      "opportunity": "<string>",
+      "corrective": "<string>"
+    }
+  ],
+  "final_assessment": "<short overall summary>"
+}
+"""
+    
+    model_instance = genai.GenerativeModel(model)
+    prompt = f"{instructions}\n\nGraded Results:\n{grades_text}"
+    
+    try:
+        response = model_instance.generate_content(prompt)
+        ai_response = response.text.strip()
+        
+        # Clean the response
+        if ai_response.startswith("```json"):
+            ai_response = ai_response[7:]
+        if ai_response.endswith("```"):
+            ai_response = ai_response[:-3]
+        
+        import json
+        result = json.loads(ai_response.strip())
+        return result
+        
+    except Exception as e:
+        print(f"⚠️ Synthesizer failed: {e}")
+        # Return a fallback result
+        return {
+            "final_grade": "B",
+            "final_assessment": f"Synthesis failed: {str(e)}",
+            "surface_questions": None,
+            "true_discovery_questions": None,
+            "filler_words": None,
+            "rep_talk_ratio": None,
+            "prospect_talk_ratio": None,
+            "strengths": [],
+            "weaknesses": [],
+            "missed_opportunities": []
+        }
 

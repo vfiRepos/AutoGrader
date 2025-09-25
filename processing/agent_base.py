@@ -76,7 +76,7 @@ class Agent:
                 cleaned = clean_json(ai_response)
                 logging.info(f"🧹 {self.name}: Cleaned JSON (first 150 chars): {cleaned[:150]}{'...' if len(cleaned) > 150 else ''}")
 
-                # Special handling for Missed Opportunity agent - extract strings from dictionaries
+                # Special handling for specific agents
                 if self.name == "Missed Opportunity":
                     try:
                         parsed_json = json.loads(cleaned)
@@ -99,12 +99,44 @@ class Agent:
                                 logging.info(f"🔧 {self.name}: Fixed dictionary examples format")
                     except Exception as parse_error:
                         logging.warning(f"⚠️ {self.name}: Could not fix examples format: {parse_error}")
+                
+                # Special handling for Call Control agent - validate talk ratios
+                elif self.name == "Call Control":
+                    try:
+                        parsed_json = json.loads(cleaned)
+                        if "rep_talk_ratio" in parsed_json and "prospect_talk_ratio" in parsed_json:
+                            rep_ratio = parsed_json["rep_talk_ratio"]
+                            prospect_ratio = parsed_json["prospect_talk_ratio"]
+                            total_ratio = rep_ratio + prospect_ratio
+                            
+                            if total_ratio > 0 and abs(total_ratio - 100) > 1:  # Allow 1% tolerance
+                                # Normalize ratios to add up to 100%
+                                parsed_json["rep_talk_ratio"] = (rep_ratio / total_ratio) * 100
+                                parsed_json["prospect_talk_ratio"] = (prospect_ratio / total_ratio) * 100
+                                cleaned = json.dumps(parsed_json)
+                                logging.warning(f"⚠️ {self.name}: Talk ratios didn't add up to 100% (was {total_ratio}%), normalized to rep: {parsed_json['rep_talk_ratio']:.1f}%, prospect: {parsed_json['prospect_talk_ratio']:.1f}%")
+                    except Exception as parse_error:
+                        logging.warning(f"⚠️ {self.name}: Could not validate talk ratios: {parse_error}")
 
-                result = SkillReport.model_validate_json(cleaned)
-
-                logging.info(f"✅ {self.name}: SUCCESS! Grade: {result.items[0].grade}")
-                logging.info(f"💬 {self.name}: Reasoning: {result.items[0].reasoning[:100]}{'...' if len(result.items[0].reasoning) > 100 else ''}")
-                return result
+                # Try direct validation first
+                try:
+                    result = SkillReport.model_validate_json(cleaned)
+                    logging.info(f"✅ {self.name}: SUCCESS! Grade: {result.items[0].grade}")
+                    logging.info(f"💬 {self.name}: Reasoning: {result.items[0].reasoning[:100]}{'...' if len(result.items[0].reasoning) > 100 else ''}")
+                    return result
+                except Exception as validation_error:
+                    # If direct validation fails, try to parse as dict and use conversion logic
+                    logging.warning(f"⚠️ {self.name}: Direct validation failed, trying conversion logic: {validation_error}")
+                    try:
+                        parsed_dict = json.loads(cleaned)
+                        from grading_manager import gradingManager
+                        result = gradingManager.convert_to_skill_report(parsed_dict, self.name.lower().replace(" ", "_"))
+                        logging.info(f"✅ {self.name}: SUCCESS! Grade: {result.items[0].grade}")
+                        logging.info(f"💬 {self.name}: Reasoning: {result.items[0].reasoning[:100]}{'...' if len(result.items[0].reasoning) > 100 else ''}")
+                        return result
+                    except Exception as conversion_error:
+                        logging.error(f"❌ {self.name}: Both validation and conversion failed: {conversion_error}")
+                        raise validation_error  # Re-raise the original validation error
 
             except Exception as e:
                 logging.warning(f"⚠️ {self.name}: Attempt {attempt + 1} failed - {str(e)}")

@@ -23,7 +23,20 @@ TASK_PUB_SUB_TOPIC_PATH = f"projects/{PROJECT_ID}/topics/{TASK_PUB_SUB_TOPIC_ID}
 REP_FOLDERS = {
     "shared_folder": "1JqJwiN37EaUe7v5_YSjBnebSds1bxV3y",
     "shared_folder_2": "17zU0G6cpY60GlcCYRXVgQRozACXXGfj2", 
-    "shared_folder_3": "13IgGftk0Oh3ywSjepWOANplSJO9pxrZq"
+    "shared_folder_3": "13IgGftk0Oh3ywSjepWOANplSJO9pxrZq", 
+    "shared_folder_4": "1Kad6BVQCWR4M2QuIKzoDy6s2N4vfo_BC", 
+    "shared_folder_5": "1Gh2gJuAq02YmpyaBX-oGdvES4ZRAU1gp", 
+    "shared_folder_6": "1vHGnT7Ptmqy7sQpp7zy6fL0ftZ1TfLap", 
+    "shared_folder_7": "1fJcqN1qynEuCX6cViT2HtoOEKNLRWWPc", 
+    "shared_folder_8": "1N0C9VqwKOuQ9d0mvAlTGZuYAB4Hy4jZV", 
+    "shared_folder_9": "1POWX35QqcGCaKrixu8nv2Yn5Jhqt_nGH", 
+    "shared_folder_10": "1O9XI8Iln4gf1RaFHXGL80PKZjXjrIF2r", 
+
+
+
+
+
+
 }
 
 # --- Pub/Sub Publisher Client (initialized once) ---
@@ -59,23 +72,19 @@ def _pubsub_client():
     return _pubsub_publisher_client
 
 
-# def list_unprocessed_files(drive, folder_id):
-#     """Find files that aren't marked processed or inflight."""
-#     query = (
-#         f"'{folder_id}' in parents and trashed = false "
-#         f"and mimeType = 'application/vnd.google-apps.document'"
-#     )
-#     fields = "files(id, name, mimeType, appProperties)"
-#     resp = drive.files().list(q=query, fields=fields).execute()
-
-#     # Filter out processed/inflight files in Python
-#     files = resp.get("files", [])
-#     unprocessed = []
-#     for f in files:
-#         props = f.get("appProperties", {}) or {}
-#         if props.get("processed") != "true" and props.get("inflight") != "true":
-#             unprocessed.append(f)
-#     return unprocessed
+def list_unprocessed_files(drive, folder_id):
+    """Find files in the main folder (not in processed subfolder)."""
+    # Only get files directly in the main folder, not in subfolders
+    query = (
+        f"'{folder_id}' in parents and trashed = false "
+        f"and mimeType = 'application/vnd.google-apps.document'"
+    )
+    fields = "files(id, name, mimeType)"
+    resp = drive.files().list(q=query, fields=fields).execute()
+    
+    files = resp.get("files", [])
+    print(f"Found {len(files)} files in main folder")
+    return files
 
 
 def list_files(drive, folder_id):
@@ -108,9 +117,9 @@ def http_handler(request):
     for rep, folder_id in REP_FOLDERS.items():
         print(f"Scanning rep={rep}, folder={folder_id}")
 
-        files = list_files(drive, folder_id); 
+        files = list_unprocessed_files(drive, folder_id); 
 
-        print(f"Found {len(files)} files")
+        print(f"Found {len(files)} unprocessed files")
 
         for f in files:
             print(f"Processing file: {f['name']} (ID: {f['id'][:10]})")

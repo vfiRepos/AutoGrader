@@ -20,9 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Gmail OAuth configuration (set via Cloud Function secrets)
-GMAIL_SA_CLIENT_ID = os.environ.get("GMAIL_SA_CLIENT_ID")
-GMAIL_SA_CLIENT_SECRET = os.environ.get("GMAIL_SA_CLIENT_SECRET")
-GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN")
+GMAIL_SA_CLIENT_ID = os.environ.get("CLIENT_ID")
+GMAIL_SA_CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
+GMAIL_REFRESH_TOKEN = os.environ.get("REFRESH_TOKEN")
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
 # Sender/recipient defaults
@@ -65,6 +65,10 @@ def normalize_grade_class(grade: str) -> str:
         return "grade-NA"
     g = grade.upper().strip()
 
+    # Handle special cases
+    if "UNABLE TO RUN AGENT" in g:
+        return "grade-ERROR"
+    
     # Handle common variants
     if g.startswith("A"):
         return "grade-A"
@@ -103,6 +107,7 @@ def format_grading_html(payload, timestamp):
             .grade-C {{ color: #e67e22; }}
             .grade-D {{ color: #e74c3c; }}
             .grade-F {{ color: #c0392b; }}
+            .grade-ERROR {{ color: #8e44ad; font-style: italic; }}
         </style>
     </head>
     <body>
@@ -122,14 +127,91 @@ def format_grading_html(payload, timestamp):
         reasoning = skill_data['reasoning']
         grade_class = normalize_grade_class(grade)
 
-
         html += f"""
         <div class="skill-card">
             <h3>{skill_name.replace('_', ' ').title()}</h3>
             <div class="grade {grade_class}">{grade}</div>
-            <p>{reasoning}</p>
-        </div>
+            <p><strong>Analysis:</strong> {reasoning}</p>
         """
+
+        # Add additional details if available
+        if 'examples' in skill_data and skill_data['examples']:
+            if skill_name == 'missed_opportunity':
+                # Special formatting for missed opportunities
+                html += f"<p><strong>Missed Opportunities:</strong></p>"
+                html += f"<ul>"
+                for example in skill_data['examples']:
+                    html += f"<li>{example}</li>"
+                html += f"</ul>"
+            else:
+                html += f"<p><strong>Examples:</strong> {skill_data['examples']}</p>"
+        
+        if 'ratio' in skill_data and skill_data['ratio'] is not None:
+            # Provide context for what the ratio represents based on skill type
+            if skill_name == 'call_control':
+                html += f"<p><strong>Talk Time Ratio:</strong> {skill_data['ratio']:.1f}% (Rep speaking time vs. total call time)</p>"
+            elif skill_name == 'discovery':
+                html += f"<p><strong>Discovery Score:</strong> {skill_data['ratio']:.1f}% (Percentage of questions that were discovery-focused)</p>"
+            elif skill_name == 'true_discovery':
+                html += f"<p><strong>Discovery Quality Score:</strong> {skill_data['ratio']:.1f}% (Overall discovery performance score)</p>"
+            else:
+                html += f"<p><strong>Ratio:</strong> {skill_data['ratio']}</p>"
+        
+        # For call control, also show both ratios from synthesis if available
+        if skill_name == 'call_control':
+            synthesis = results.get('final_synthesis', {})
+            if synthesis.get('rep_talk_ratio') is not None and synthesis.get('prospect_talk_ratio') is not None:
+                html += f"<p><strong>Detailed Talk Ratios:</strong></p>"
+                html += f"<ul>"
+                html += f"<li><strong>Rep Talk Ratio:</strong> {synthesis['rep_talk_ratio']:.1f}% (Percentage of call time rep was speaking)</li>"
+                html += f"<li><strong>Prospect Talk Ratio:</strong> {synthesis['prospect_talk_ratio']:.1f}% (Percentage of call time prospect was speaking)</li>"
+                html += f"</ul>"
+        
+        if 'count' in skill_data and skill_data['count'] is not None:
+            if skill_name == 'discovery':
+                html += f"<p><strong>Total Questions Asked:</strong> {skill_data['count']} (Total number of questions during discovery phase)</p>"
+            elif skill_name == 'true_discovery':
+                html += f"<p><strong>True Discovery Questions Asked:</strong> {skill_data['count']} (Number of deep discovery questions)</p>"
+            elif skill_name == 'filler_use':
+                html += f"<p><strong>Filler Words Count:</strong> {skill_data['count']} (Number of unnecessary filler words/phrases)</p>"
+            else:
+                html += f"<p><strong>Count:</strong> {skill_data['count']}</p>"
+
+        # Add boolean criteria display
+        boolean_criteria = []
+        if skill_name == 'segment_awareness':
+            if skill_data.get('segment_identified') is not None:
+                boolean_criteria.append(("Segment Identified", skill_data['segment_identified']))
+            if skill_data.get('tailored_questions') is not None:
+                boolean_criteria.append(("Tailored Questions", skill_data['tailored_questions']))
+            if skill_data.get('positioning_aligned') is not None:
+                boolean_criteria.append(("Positioning Aligned", skill_data['positioning_aligned']))
+        elif skill_name == 'value_prop':
+            if skill_data.get('differentiators_reinforced') is not None:
+                boolean_criteria.append(("Differentiators Reinforced", skill_data['differentiators_reinforced']))
+            if skill_data.get('positioned_as_partner') is not None:
+                boolean_criteria.append(("Positioned as Partner", skill_data['positioned_as_partner']))
+            if skill_data.get('connected_to_situation') is not None:
+                boolean_criteria.append(("Connected to Situation", skill_data['connected_to_situation']))
+        elif skill_name == 'cap_ex':
+            if skill_data.get('distinguished_from_banks') is not None:
+                boolean_criteria.append(("Distinguished from Banks", skill_data['distinguished_from_banks']))
+            if skill_data.get('emphasized_fixed_assets') is not None:
+                boolean_criteria.append(("Emphasized Fixed Assets", skill_data['emphasized_fixed_assets']))
+            if skill_data.get('explained_liquidity') is not None:
+                boolean_criteria.append(("Explained Liquidity", skill_data['explained_liquidity']))
+            if skill_data.get('aligned_with_priorities') is not None:
+                boolean_criteria.append(("Aligned with Priorities", skill_data['aligned_with_priorities']))
+        
+        if boolean_criteria:
+            html += f"<p><strong>Criteria Assessment:</strong></p>"
+            html += f"<ul>"
+            for criterion, result in boolean_criteria:
+                icon = "✅" if result else "❌"
+                html += f"<li>{icon} <strong>{criterion}:</strong> {'Yes' if result else 'No'}</li>"
+            html += f"</ul>"
+
+        html += "</div>"
 
     # Add final synthesis
     synthesis = results['final_synthesis']
@@ -142,9 +224,69 @@ def format_grading_html(payload, timestamp):
         <div class="skill-card">
             <h3>Overall Performance</h3>
             <div class="grade {synthesis_class}">{synthesis_grade}</div>
-            <p>{synthesis_reasoning}</p>
+            <p><strong>Assessment:</strong> {synthesis_reasoning}</p>
         </div>
+    """
 
+    # Add detailed metrics in a separate section if available
+    has_metrics = any([
+        synthesis.get('surface_questions') is not None,
+        synthesis.get('true_discovery_questions') is not None,
+        synthesis.get('filler_words') is not None,
+        synthesis.get('rep_talk_ratio') is not None,
+        synthesis.get('prospect_talk_ratio') is not None
+    ])
+    
+    if has_metrics:
+        html += """
+        <h2>📊 Performance Metrics</h2>
+        <div class="skill-card">
+        """
+        if synthesis.get('surface_questions') is not None:
+            html += f"<p><strong>Surface Questions:</strong> {synthesis['surface_questions']} (Basic questions that don't count toward discovery score)</p>"
+        if synthesis.get('true_discovery_questions') is not None:
+            html += f"<p><strong>True Discovery Questions:</strong> {synthesis['true_discovery_questions']} (Deep discovery questions about role, authority, deal flow, etc.)</p>"
+        if synthesis.get('filler_words') is not None:
+            html += f"<p><strong>Filler Words:</strong> {synthesis['filler_words']}</p>"
+        if synthesis.get('rep_talk_ratio') is not None:
+            html += f"<p><strong>Rep Talk Ratio:</strong> {synthesis['rep_talk_ratio']:.1f}% (Percentage of call time rep was speaking)</p>"
+        if synthesis.get('prospect_talk_ratio') is not None:
+            html += f"<p><strong>Prospect Talk Ratio:</strong> {synthesis['prospect_talk_ratio']:.1f}% (Percentage of call time prospect was speaking)</p>"
+        html += "</div>"
+
+    # Add strengths in a separate section if available
+    if synthesis.get('strengths') and len(synthesis['strengths']) > 0:
+        html += """
+        <h2>✅ Key Strengths</h2>
+        <div class="skill-card">
+        """
+        for strength in synthesis['strengths'][:5]:  # Show first 5
+            html += f"<p>• {strength}</p>"
+        html += "</div>"
+
+    # Add weaknesses in a separate section if available
+    if synthesis.get('weaknesses') and len(synthesis['weaknesses']) > 0:
+        html += """
+        <h2>⚠️ Areas for Improvement</h2>
+        <div class="skill-card">
+        """
+        for weakness in synthesis['weaknesses'][:5]:  # Show first 5
+            html += f"<p>• {weakness}</p>"
+        html += "</div>"
+
+    # Add missed opportunities in a separate section if available
+    if synthesis.get('missed_opportunities') and len(synthesis['missed_opportunities']) > 0:
+        html += """
+        <h2>🎯 Missed Opportunities</h2>
+        <div class="skill-card">
+        """
+        for opp in synthesis['missed_opportunities'][:3]:  # Show first 3
+            opportunity = opp.get('opportunity', 'Opportunity')
+            corrective = opp.get('corrective', 'No corrective action specified')
+            html += f"<p><strong>{opportunity}:</strong><br>{corrective}</p>"
+        html += "</div>"
+
+    html += """
         <p><em>The full transcript is attached to this email.</em></p>
     </body>
     </html>

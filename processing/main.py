@@ -5,6 +5,7 @@ import logging
 from pubsub_logic import parse_pubsub_event, fetch_transcript_by_id
 from grading_manager import gradingManager
 from gemini_client import init_gemini
+from processedFile_handling import move_file_to_processed
 from google.cloud import pubsub_v1
 import sys
 
@@ -54,6 +55,7 @@ def pubsub_handler(event, context):
     file_id = task.get("fileId")
     file_name = task.get("fileName")
     rep = task.get("rep")
+    folder_id = task.get("folderId")
     manager_email = task.get("managerEmail", "gusdaskalakis@gmail.com")
 
 
@@ -89,16 +91,38 @@ def pubsub_handler(event, context):
                 "individual_scores": {
                     skill_name: {
                         "grade": skill_result.items[0].grade if skill_result.items else "N/A",
-                        "reasoning": skill_result.items[0].reasoning if skill_result.items else "No reasoning available"
+                        "reasoning": skill_result.items[0].reasoning if skill_result.items else "No reasoning available",
+                        "count": skill_result.items[0].count if skill_result.items and skill_result.items[0].count is not None else None,
+                        "examples": skill_result.items[0].examples if skill_result.items and skill_result.items[0].examples else None,
+                        "ratio": skill_result.items[0].ratio if skill_result.items and skill_result.items[0].ratio is not None else None,
+                        # Boolean fields for specific criteria
+                        "segment_identified": skill_result.items[0].segment_identified if skill_result.items and skill_result.items[0].segment_identified is not None else None,
+                        "tailored_questions": skill_result.items[0].tailored_questions if skill_result.items and skill_result.items[0].tailored_questions is not None else None,
+                        "positioning_aligned": skill_result.items[0].positioning_aligned if skill_result.items and skill_result.items[0].positioning_aligned is not None else None,
+                        "differentiators_reinforced": skill_result.items[0].differentiators_reinforced if skill_result.items and skill_result.items[0].differentiators_reinforced is not None else None,
+                        "positioned_as_partner": skill_result.items[0].positioned_as_partner if skill_result.items and skill_result.items[0].positioned_as_partner is not None else None,
+                        "connected_to_situation": skill_result.items[0].connected_to_situation if skill_result.items and skill_result.items[0].connected_to_situation is not None else None,
+                        "distinguished_from_banks": skill_result.items[0].distinguished_from_banks if skill_result.items and skill_result.items[0].distinguished_from_banks is not None else None,
+                        "emphasized_fixed_assets": skill_result.items[0].emphasized_fixed_assets if skill_result.items and skill_result.items[0].emphasized_fixed_assets is not None else None,
+                        "explained_liquidity": skill_result.items[0].explained_liquidity if skill_result.items and skill_result.items[0].explained_liquidity is not None else None,
+                        "aligned_with_priorities": skill_result.items[0].aligned_with_priorities if skill_result.items and skill_result.items[0].aligned_with_priorities is not None else None
                     } for skill_name, skill_result in results.items()
                 },
-                "final_synthesis": (
-                    {
-                        "grade": synthesis_result.items[0].grade if synthesis_result and synthesis_result.items else "N/A",
-                        "reasoning": synthesis_result.items[0].reasoning if synthesis_result and synthesis_result.items else "No synthesis reasoning available"
-                    } if synthesis_result else
-                    {"grade": "ERROR", "reasoning": "No synthesis"}
-                )
+                       "final_synthesis": (
+                           {
+                               "grade": synthesis_result.get("final_grade", "N/A") if synthesis_result else "N/A",
+                               "reasoning": synthesis_result.get("final_assessment", "No synthesis reasoning available") if synthesis_result else "No synthesis reasoning available",
+                               "surface_questions": synthesis_result.get("surface_questions") if synthesis_result else None,
+                               "true_discovery_questions": synthesis_result.get("true_discovery_questions") if synthesis_result else None,
+                               "filler_words": synthesis_result.get("filler_words") if synthesis_result else None,
+                               "rep_talk_ratio": synthesis_result.get("rep_talk_ratio") if synthesis_result else None,
+                               "prospect_talk_ratio": synthesis_result.get("prospect_talk_ratio") if synthesis_result else None,
+                               "strengths": synthesis_result.get("strengths") if synthesis_result else None,
+                               "weaknesses": synthesis_result.get("weaknesses") if synthesis_result else None,
+                               "missed_opportunities": synthesis_result.get("missed_opportunities") if synthesis_result else None
+                           } if synthesis_result else
+                           {"grade": "ERROR", "reasoning": "No synthesis"}
+                       )
             },
             "metadata": {
                 "processed_at": getattr(context, "timestamp", None),
@@ -116,4 +140,14 @@ def pubsub_handler(event, context):
     logger.info(f"🔍 DEBUG: {json.dumps(emailer_payload, indent=2)}")
    
     message_id = publish_emailer_payload(emailer_payload)
+    
+    # 7. Move file to processed folder after successful completion
+    try:
+        logger.info(f"📁 Moving file {file_id} to processed folder...")
+        move_file_to_processed(file_id, folder_id)
+        logger.info(f"✅ Successfully moved file {file_id} to processed folder")
+    except Exception as e:
+        logger.error(f"❌ Failed to move file {file_id} to processed folder: {e}")
+        # Don't fail the entire process if file move fails
+    
     return message_id

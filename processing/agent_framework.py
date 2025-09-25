@@ -1,6 +1,7 @@
 import re
 import time
 import logging
+import json
 import google.generativeai as genai
 from pydantic_formating import SkillReport
 
@@ -45,7 +46,7 @@ class Agent:
                 response = self.model.generate_content(prompt)
                 ai_response = response.text or ""
                 cleaned = clean_ai_json(ai_response)
-                result = SkillReport.model_validate_json(cleaned)
+                result = json.loads(cleaned)
 
                 elapsed = time.time() - start_time
                 logging.info(f"✅ Grading for {self.name} completed in {elapsed:.2f}s")
@@ -55,13 +56,8 @@ class Agent:
                 logging.warning(f"⚠️ Attempt {attempt}/{max_retries} failed: {e}")
                 if attempt == max_retries:
                     logging.error(f"❌ Giving up on {self.name}, using fallback.")
-                    return SkillReport.model_validate({
-                        "items": [
-                            {
-                                "skill": self.name.lower().replace(" ", "_"),
-                                "grade": "C",
-                                "reasoning": f"Error parsing AI response: {e}"
-                            }
-                        ]
-                    })
+                    return {
+                        "grade": "Unable to run agent",
+                        "reasoning": f"Agent failed to provide a grade or reasoning: {e}"
+                    }
                 time.sleep(2 * attempt)  # backoff before retry
