@@ -73,11 +73,20 @@ class gradingManager:
                     
                     # Validate and fix ratios if they don't add up to 100%
                     total_ratio = rep_ratio + prospect_ratio
-                    if total_ratio > 0 and abs(total_ratio - 100) > 1:  # Allow 1% tolerance
-                        # Normalize ratios to add up to 100%
-                        rep_ratio = (rep_ratio / total_ratio) * 100
-                        prospect_ratio = (prospect_ratio / total_ratio) * 100
-                        logging.warning(f"⚠️ Talk ratios didn't add up to 100% (was {total_ratio}%), normalized to rep: {rep_ratio:.1f}%, prospect: {prospect_ratio:.1f}%")
+                    if total_ratio > 0:
+                        if abs(total_ratio - 100) > 1:  # Allow 1% tolerance
+                            # Normalize ratios to add up to 100%
+                            original_rep = rep_ratio
+                            original_prospect = prospect_ratio
+                            rep_ratio = (rep_ratio / total_ratio) * 100
+                            prospect_ratio = (prospect_ratio / total_ratio) * 100
+                            logging.warning(f"⚠️ Talk ratios didn't add up to 100% (was {total_ratio:.1f}%), normalized from rep: {original_rep:.1f}%, prospect: {original_prospect:.1f}% to rep: {rep_ratio:.1f}%, prospect: {prospect_ratio:.1f}%")
+                        else:
+                            logging.info(f"✅ Talk ratios add up correctly: rep {rep_ratio:.1f}%, prospect {prospect_ratio:.1f}% (total: {total_ratio:.1f}%)")
+                    else:
+                        logging.warning(f"⚠️ Both talk ratios are 0, setting default 50/50 split")
+                        rep_ratio = 50.0
+                        prospect_ratio = 50.0
                     
                     # Use rep ratio as the primary ratio for display
                     ratio = rep_ratio

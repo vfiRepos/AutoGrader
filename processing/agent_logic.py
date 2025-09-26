@@ -16,6 +16,7 @@ call_control_agent = Agent(
        - CRITICAL: These ratios must add up to exactly 100%. If there are other participants, include them in the calculation.
        - Note: These ratios represent the proportion of total call time each participant was speaking.
        - Example: If rep talked 60% and prospect talked 40%, then rep_talk_ratio=60.0 and prospect_talk_ratio=40.0
+       - IMPORTANT: Do NOT include silence, background noise, or non-speaking time in your calculations. Only count actual speaking time.
 
     2. Call Control
        - Did the rep balance listening vs. talking?

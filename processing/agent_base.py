@@ -100,23 +100,7 @@ class Agent:
                     except Exception as parse_error:
                         logging.warning(f"⚠️ {self.name}: Could not fix examples format: {parse_error}")
                 
-                # Special handling for Call Control agent - validate talk ratios
-                elif self.name == "Call Control":
-                    try:
-                        parsed_json = json.loads(cleaned)
-                        if "rep_talk_ratio" in parsed_json and "prospect_talk_ratio" in parsed_json:
-                            rep_ratio = parsed_json["rep_talk_ratio"]
-                            prospect_ratio = parsed_json["prospect_talk_ratio"]
-                            total_ratio = rep_ratio + prospect_ratio
-                            
-                            if total_ratio > 0 and abs(total_ratio - 100) > 1:  # Allow 1% tolerance
-                                # Normalize ratios to add up to 100%
-                                parsed_json["rep_talk_ratio"] = (rep_ratio / total_ratio) * 100
-                                parsed_json["prospect_talk_ratio"] = (prospect_ratio / total_ratio) * 100
-                                cleaned = json.dumps(parsed_json)
-                                logging.warning(f"⚠️ {self.name}: Talk ratios didn't add up to 100% (was {total_ratio}%), normalized to rep: {parsed_json['rep_talk_ratio']:.1f}%, prospect: {parsed_json['prospect_talk_ratio']:.1f}%")
-                    except Exception as parse_error:
-                        logging.warning(f"⚠️ {self.name}: Could not validate talk ratios: {parse_error}")
+                # Note: Talk ratio normalization is handled in grading_manager.py to avoid duplicate processing
 
                 # Try direct validation first
                 try:
