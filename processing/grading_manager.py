@@ -232,7 +232,7 @@ class gradingManager:
         for skill_name, raw_result in raw_results.items():
             results[skill_name] = self.convert_to_skill_report(raw_result, skill_name)
 
-        synthesis_result = run_synthesizer(results, "gemini-1.5-flash")
+        synthesis_result = run_synthesizer(results, "gemini-2.0-flash")
         # The synthesizer returns a dict, not a SkillReport, so we don't need to convert it
 
         # 📊 Detailed results output

@@ -311,7 +311,7 @@ capex_agent = Agent(
 )
 
 
-def build_synthesizer(model: str = "gemini-1.5-flash"):
+def build_synthesizer(model: str = "gemini-2.0-flash"):
     instructions = """
 You are the synthesizer. Combine the graded outputs from all skill-specific agents into one unified final evaluation.
 
@@ -354,7 +354,7 @@ Response Format (JSON only):
         model=model,
     )
 
-def run_synthesizer(graded_results: dict, model: str = "gemini-1.5-flash"):
+def run_synthesizer(graded_results: dict, model: str = "gemini-2.0-flash"):
     # flatten skill grades into text once
     grades_text = "\n".join(
         f"{skill_name.replace('_', ' ').title()}: {report.items[0].grade} — {report.items[0].reasoning}"

@@ -10,7 +10,7 @@ def clean_ai_json(ai_response: str) -> str:
     return re.sub(r"^```json|```$", "", ai_response.strip(), flags=re.MULTILINE).strip()
 
 class Agent:
-    def __init__(self, name: str, instructions: str, model: str = "gemini-1.5-flash"):
+    def __init__(self, name: str, instructions: str, model: str = "gemini-2.0-flash"):
         self.name = name
         self.instructions = instructions
         self.model = genai.GenerativeModel(model)

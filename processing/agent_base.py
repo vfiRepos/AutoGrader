@@ -14,7 +14,7 @@ def clean_json(raw: str) -> str:
 
 
 class Agent:
-    def __init__(self, name: str, instructions: str, model: str = "gemini-1.5-flash", tools=None):
+    def __init__(self, name: str, instructions: str, model: str = "gemini-2.0-flash", tools=None):
         self.name = name
         self.instructions = instructions
         self.model = genai.GenerativeModel(model)
