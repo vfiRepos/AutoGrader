@@ -15,9 +15,9 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 def _drive_service():
     """Create Drive API client using OAuth2 credentials."""
     # Debug: Check if environment variables are present
-    refresh_token = os.environ.get("REFRESH_TOKEN")
-    client_id = os.environ.get("CLIENT_ID")
-    client_secret = os.environ.get("CLIENT_SECRET")
+    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN")
+    client_id = os.environ.get("GMAIL_SA_CLIENT_ID")
+    client_secret = os.environ.get("GMAIL_SA_CLIENT_SECRET")
 
     
     creds = Credentials(

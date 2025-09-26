@@ -18,19 +18,19 @@ def get_drive_service(use_full_scope=False):
     logger = logging.getLogger(__name__)
     
     # Debug: Check if environment variables are present
-    refresh_token = os.environ.get("REFRESH_TOKEN")
-    client_id = os.environ.get("CLIENT_ID")
-    client_secret = os.environ.get("CLIENT_SECRET")
+    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN")
+    client_id = os.environ.get("GMAIL_SA_CLIENT_ID")
+    client_secret = os.environ.get("GMAIL_SA_CLIENT_SECRET")
     
     if not refresh_token:
-        logger.error("❌ REFRESH_TOKEN is missing or empty")
-        raise ValueError("REFRESH_TOKEN environment variable is required")
+        logger.error("❌ GMAIL_REFRESH_TOKEN is missing or empty")
+        raise ValueError("GMAIL_REFRESH_TOKEN environment variable is required")
     if not client_id:
-        logger.error("❌ CLIENT_ID is missing or empty")
-        raise ValueError("CLIENT_ID environment variable is required")
+        logger.error("❌ GMAIL_SA_CLIENT_ID is missing or empty")
+        raise ValueError("GMAIL_SA_CLIENT_ID environment variable is required")
     if not client_secret:
-        logger.error("❌ CLIENT_SECRET is missing or empty")
-        raise ValueError("CLIENT_SECRET environment variable is required")
+        logger.error("❌ GMAIL_SA_CLIENT_SECRET is missing or empty")
+        raise ValueError("GMAIL_SA_CLIENT_SECRET environment variable is required")
     
     creds = Credentials(
         token=None,
