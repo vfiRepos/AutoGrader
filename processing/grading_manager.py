@@ -1,4 +1,5 @@
 import os, time
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from agent_logic import trueDiscovery_agent
 from agent_logic import processCompliance_agent
 from agent_logic import segmentAwareness_agent
 from pydantic_formating import SkillReport, GradeItem, FlexibleSkillReport
+import logging
 
 
 class gradingManager: 
