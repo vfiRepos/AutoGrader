@@ -5,7 +5,7 @@ import logging
 from pubsub_logic import parse_pubsub_event, fetch_transcript_by_id
 from grading_manager import gradingManager
 from gemini_client import init_gemini
-from processedFile_handling import move_file_to_processed
+from processedFile_handling import move_file_to_processed, move_file_to_invalid
 from google.cloud import pubsub_v1
 import sys
 
@@ -61,15 +61,68 @@ def pubsub_handler(event, context):
 
     transcript = fetch_transcript_by_id(file_id)
     
-    # Check if transcript is missing or empty
+    # Check if transcript is missing, empty, or has minimal content
     if not transcript or not transcript.strip():
         logger.warning(f"⚠️ No transcript available for file {file_id} ({file_name}), skipping processing")
+        # Move invalid files to invalid-transcripts folder to prevent re-scanning
+        try:
+            logger.info(f"📁 Moving invalid file {file_id} to invalid-transcripts folder...")
+            move_file_to_invalid(file_id, folder_id)
+            logger.info(f"✅ Successfully moved invalid file {file_id} to invalid-transcripts folder")
+        except Exception as e:
+            logger.error(f"❌ Failed to move invalid file {file_id} to invalid-transcripts folder: {e}")
         return {"status": "skipped", "reason": "no_transcript"}
+    
+    # Check if transcript has minimal content (less than 100 characters or just whitespace)
+    transcript_clean = transcript.strip()
+    if len(transcript_clean) < 100:
+        logger.warning(f"⚠️ Transcript too short for file {file_id} ({file_name}) - only {len(transcript_clean)} characters, skipping processing")
+        # Move files with minimal content to invalid-transcripts folder
+        try:
+            logger.info(f"📁 Moving file with minimal content {file_id} to invalid-transcripts folder...")
+            move_file_to_invalid(file_id, folder_id)
+            logger.info(f"✅ Successfully moved file with minimal content {file_id} to invalid-transcripts folder")
+        except Exception as e:
+            logger.error(f"❌ Failed to move file with minimal content {file_id} to invalid-transcripts folder: {e}")
+        return {"status": "skipped", "reason": "minimal_content", "content_length": len(transcript_clean)}
+    
+    # Check for common invalid content patterns
+    invalid_patterns = [
+        "test", "testing", "sample", "example", "draft", "placeholder",
+        "hello world", "lorem ipsum", "asdf", "qwerty", "123", "abc"
+    ]
+    transcript_lower = transcript_clean.lower()
+    
+    # Check if transcript is mostly just common invalid patterns
+    words = transcript_lower.split()
+    if len(words) <= 5:  # Very short content
+        for pattern in invalid_patterns:
+            if pattern in transcript_lower:
+                logger.warning(f"⚠️ Transcript appears to be test/invalid content for file {file_id} ({file_name}): '{transcript_clean[:50]}...', skipping processing")
+                # Move files with invalid patterns to invalid-transcripts folder
+                try:
+                    logger.info(f"📁 Moving file with invalid pattern {file_id} to invalid-transcripts folder...")
+                    move_file_to_invalid(file_id, folder_id)
+                    logger.info(f"✅ Successfully moved file with invalid pattern {file_id} to invalid-transcripts folder")
+                except Exception as e:
+                    logger.error(f"❌ Failed to move file with invalid pattern {file_id} to invalid-transcripts folder: {e}")
+                return {"status": "skipped", "reason": "invalid_pattern", "content": transcript_clean[:100]}
        
     # 3. Run grading
     grader = gradingManager()
     results, synthesis_result = {}, None
-    results, synthesis_result = grader.grade_all(transcript)
+    try:
+        results, synthesis_result = grader.grade_all(transcript)
+    except Exception as e:
+        logger.error(f"❌ Grading failed for file {file_id} ({file_name}): {e}")
+        # Move failed files to invalid-transcripts folder to prevent re-scanning
+        try:
+            logger.info(f"📁 Moving failed file {file_id} to invalid-transcripts folder...")
+            move_file_to_invalid(file_id, folder_id)
+            logger.info(f"✅ Successfully moved failed file {file_id} to invalid-transcripts folder")
+        except Exception as move_error:
+            logger.error(f"❌ Failed to move failed file {file_id} to invalid-transcripts folder: {move_error}")
+        return {"status": "failed", "reason": "grading_error", "error": str(e)}
     
     # Debug: Check what's in results
     logger.info(f"🔍 DEBUG: results type: {type(results)}")
@@ -139,7 +192,18 @@ def pubsub_handler(event, context):
     logger.info(f"🔍 DEBUG: Complete emailer payload being sent:")
     logger.info(f"🔍 DEBUG: {json.dumps(emailer_payload, indent=2)}")
    
-    message_id = publish_emailer_payload(emailer_payload)
+    try:
+        message_id = publish_emailer_payload(emailer_payload)
+    except Exception as e:
+        logger.error(f"❌ Failed to publish email for file {file_id}: {e}")
+        # Still move to processed folder even if email fails
+        try:
+            logger.info(f"📁 Moving file {file_id} to processed folder despite email failure...")
+            move_file_to_processed(file_id, folder_id)
+            logger.info(f"✅ Successfully moved file {file_id} to processed folder")
+        except Exception as move_error:
+            logger.error(f"❌ Failed to move file {file_id} to processed folder: {move_error}")
+        return {"status": "failed", "reason": "email_failed", "error": str(e)}
     
     # 7. Move file to processed folder after successful completion
     try:

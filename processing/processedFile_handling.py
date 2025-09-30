@@ -115,3 +115,52 @@ def move_file_to_processed(file_id: str, parent_folder_id: str, service=None):
     print(f"Moved file {file_id} to processed folder {processed_folder_id}")
     return processed_folder_id
 
+def move_file_to_invalid(file_id: str, parent_folder_id: str, service=None):
+    """Move a file to the invalid-transcripts subfolder within processed."""
+    svc = service or get_drive_service()
+    
+    # Get the processed folder ID (create if doesn't exist)
+    processed_folder_id = create_processed_folder(parent_folder_id, svc)
+    
+    # Get the invalid-transcripts folder ID (create if doesn't exist)
+    invalid_folder_id = create_invalid_transcripts_folder(processed_folder_id, svc)
+    
+    # Get the file's current parents
+    file_metadata = svc.files().get(fileId=file_id, fields='parents').execute()
+    previous_parents = ",".join(file_metadata.get('parents', []))
+    
+    # Move the file to the invalid-transcripts folder
+    svc.files().update(
+        fileId=file_id,
+        addParents=invalid_folder_id,
+        removeParents=previous_parents,
+        fields='id, parents'
+    ).execute()
+    
+    print(f"Moved invalid file {file_id} to invalid-transcripts folder {invalid_folder_id}")
+    return invalid_folder_id
+
+def create_invalid_transcripts_folder(processed_folder_id: str, service=None):
+    """Create an 'invalid-transcripts' subfolder in the processed folder if it doesn't exist."""
+    svc = service or get_drive_service()
+    
+    # Check if invalid-transcripts folder already exists
+    query = f"'{processed_folder_id}' in parents and name = 'invalid-transcripts' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    resp = svc.files().list(q=query, fields="files(id, name)").execute()
+    existing_folders = resp.get("files", [])
+    
+    if existing_folders:
+        print(f"Invalid-transcripts folder already exists: {existing_folders[0]['id']}")
+        return existing_folders[0]['id']
+    
+    # Create the invalid-transcripts folder
+    folder_metadata = {
+        'name': 'invalid-transcripts',
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [processed_folder_id]
+    }
+    
+    folder = svc.files().create(body=folder_metadata, fields='id').execute()
+    print(f"Created invalid-transcripts folder: {folder['id']}")
+    return folder['id']
+
